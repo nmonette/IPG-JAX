@@ -102,7 +102,7 @@ def make_train(args):
 
             return (rng, agent_params), compute_nash_gap(_rng, args, policy, agent_params, rollout)
 
-        carry_out, nash_gap = jax.lax.scan(train_loop, (rng, agent_params), jnp.arange(args.iters), args.iters)
+        carry_out, nash_gap = jax.lax.scan(train_loop, (rng, agent_params), jnp.arange(args.iters), 1000)
 
         return nash_gap
 

@@ -77,9 +77,9 @@ class AdvMultiGrid(environment.Environment):
             return jnp.append(state.agent.pos, goals, 1)
         
         if self.partial:
-            return partial_extract_agent_obs()
+            return jnp.int32(partial_extract_agent_obs())
         else:
-            return jnp.repeat(extract_agent_obs().reshape(-1, 15), jnp.array((3, )), axis=0, total_repeat_length=3)
+            return jnp.int32(jnp.repeat(extract_agent_obs().reshape(-1, 15), jnp.array((3, )), axis=0, total_repeat_length=3))
     
     def step_env(self, _, state: EnvState, action: jnp.ndarray, *args, **kwargs):
         pos = jax.vmap(self._handle_actions)(state.agent.pos, action)
