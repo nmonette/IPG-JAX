@@ -115,7 +115,7 @@ def main(cmd=sys.argv[1:]):
     # with jax.numpy_dtype_promotion('strict'):
     nash_gap = jax.jit(train_fn)(rng)
     
-    # print(jnp.max(nash_gap, 1))
+    print(jnp.max(nash_gap, 1))
 
 if __name__ == "__main__":
     main()
