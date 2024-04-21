@@ -104,7 +104,6 @@ class GridVisualizer(object):
 
     def update(self, frame):
         frame = self.state_seq[frame]
-        print(frame.done)
         if frame.done or self.finished:
             self.finished = True
             return
