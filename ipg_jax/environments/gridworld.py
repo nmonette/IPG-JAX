@@ -86,9 +86,8 @@ class AdvMultiGrid(environment.Environment):
         reward, term1, term2 = jax.vmap(self._handle_rewards, in_axes=(None, 0))(state, state.agent)
 
         agent = state.agent.replace(pos=pos, active=jnp.int32(jnp.logical_not(term1 + term2)))
-        state = state.replace(time = state.time + 1, agent=agent, goal1=state.goal1.replace(active=jnp.int32(jnp.logical_not(jnp.sum(term1)))), goal2=state.goal2.replace(active=jnp.int32(jnp.logical_not(jnp.sum(term2)))))
-        
         done = jnp.int32(jnp.logical_or(state.time == self.max_time, jnp.logical_or(jnp.sum(state.agent.active[:-1]) == 0, jnp.int32(state.agent.active[-1]) == 0), ))
+        state = state.replace(time = state.time + 1, done=done, agent=agent, goal1=state.goal1.replace(active=jnp.int32(jnp.logical_not(jnp.sum(term1)))), goal2=state.goal2.replace(active=jnp.int32(jnp.logical_not(jnp.sum(term2)))))
         return (
             jax.lax.stop_gradient(self.get_obs(state)),
             jax.lax.stop_gradient(state),

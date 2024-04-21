@@ -97,9 +97,17 @@ class GridVisualizer(object):
         
         self.artists = artists
 
+        self.goal1_removed = False
+        self.goal2_removed = False
+        self.finished = False
+
 
     def update(self, frame):
         frame = self.state_seq[frame]
+        print(frame.done)
+        if frame.done or self.finished:
+            self.finished = True
+            return
 
         artists = []
         def plot_object(obj, goal=False):
@@ -130,10 +138,26 @@ class GridVisualizer(object):
             if agent.active:
                 artists.append(plot_object(agent))
             else:
-                self.artists[i].remove()
+                self.artists[idx].remove()
+                artists.append((0,0))
 
-        artists.append(plot_object(frame.goal1, True))
-        artists.append(plot_object(frame.goal2, True))
+        if frame.goal1.active:
+            artists.append(plot_object(frame.goal1, True))
+        elif jnp.bitwise_not(frame.goal1.active) and not self.goal1_removed:
+            self.artists[idx+1].remove()
+            artists.append((0,0))
+            self.goal1_removed = True
+        else:
+            artists.append((0,0))
+
+        if frame.goal2.active:
+            artists.append(plot_object(frame.goal2, True))
+        elif jnp.bitwise_not(frame.goal2.active) and not self.goal2_removed:
+            self.artists[idx+2].remove()
+            artists.append((0,0))
+            self.goal2_removed = True
+        else:
+            artists.append((0,0))
 
         for i in range(len(artists)):
             if i < len(artists) - 2:
@@ -141,8 +165,6 @@ class GridVisualizer(object):
             else:
                 self.artists[i].set_xy(artists[i])
 
-        
-## Remove agent if they are terminated
 
 if __name__ == "__main__":
     # rng = jax.random.PRNGKey(0)

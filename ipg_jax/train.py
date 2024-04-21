@@ -1,5 +1,6 @@
 import jax
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 
 from environments import RolloutWrapper, GridVisualizer
 from agents.policy import DirectPolicy
@@ -100,7 +101,7 @@ def make_train(args):
             
             rng, _rng = jax.random.split(rng)
 
-            return (rng, agent_params), None # compute_nash_gap(_rng, args, policy, agent_params, rollout)
+            return (rng, agent_params), compute_nash_gap(_rng, args, policy, agent_params, rollout)
 
         carry_out, nash_gap = jax.lax.scan(train_loop, (rng, agent_params), jnp.arange(args.iters), args.iters)
 
@@ -127,13 +128,23 @@ def main(cmd=sys.argv[1:]):
     os.makedirs(f"output/experiment-{experiment_num}")
 
     with jax.disable_jit(True):
-        gv = GridVisualizer({"dim": args.dim, "max_time":12}, states, None)
-        gv.animate(view=True)
+        states_new = []
+        for i in range(states.done.shape[0]):
+            states_new.append(jax.tree_util.tree_map(lambda v: v[i], states))
+        gv = GridVisualizer({"dim": args.dim, "max_time":12}, states_new, None)
+        gv.animate(f"output/experiment-{experiment_num}/game.gif", view=True)
 
     for agent in range(len(agent_params)):
         jnp.save(f"output/experiment-{experiment_num}/agent{agent+1}", agent_params[agent])
+
+    nash_gap = jnp.max(nash_gap, 1)
+    plt.plot(nash_gap)
+    plt.xlabel("Iterations")
+    plt.ylabel("Nash Gap")
+
+    plt.savefig(f"output/experiment-{experiment_num}/nash-gap")
     
-    # print(jnp.max(nash_gap, 1))
+    
 
 if __name__ == "__main__":
     main()

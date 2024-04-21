@@ -149,7 +149,7 @@ class RolloutWrapper:
             transition = Transition(obs, action, reward, next_obs, done, log_probs)
             if self.return_info:
                 return carry, (transition, info)
-            return carry, transition
+            return carry, next_state.replace(done=done)
 
         # Scan over episode step loop
         carry_out, states = jax.lax.scan(
