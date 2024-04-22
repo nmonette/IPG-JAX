@@ -12,7 +12,7 @@ def projection_simplex_truncated(x: jnp.ndarray, eps: float) -> jnp.ndarray:
     lambdas = jnp.concatenate((ones * eps - x, ones - x), axis=-1)
     idx = jnp.argsort(lambdas)
     lambdas = jnp.take_along_axis(lambdas, idx, -1)
-    active = jnp.cumsum((idx < x.shape[-1]) * 2 - 1, axis=-1)[..., :-1]
+    active = jnp.cumsum((jnp.float32(idx < x.shape[-1])) * 2 - 1, axis=-1)[..., :-1]
     diffs = jnp.diff(lambdas, n=1, axis=-1)
     left = (ones * eps).sum(axis=-1)
     left = left.reshape(*left.shape, 1)

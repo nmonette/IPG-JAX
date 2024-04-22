@@ -108,7 +108,7 @@ class RolloutWrapper:
                 init_obs,
                 init_state,
                 agent_params,
-                jnp.float32(1.0),
+                jnp.int32(1.0),
             ],
             (),
             self.eval_rollout_len if eval else self.train_rollout_len,
@@ -120,6 +120,53 @@ class RolloutWrapper:
             return rollout, end_obs, end_state, cum_return, info
         return rollout, end_obs, end_state, cum_return
     
+    def render_rollout(
+        self, rng, agent_params, init_obs, init_state, eval=False
+    ):
+        """Rollout an episode."""
+        def policy_step(state_input, _):
+            rng, obs, state, agent_params, valid_mask, lambda_, gamma = state_input
+            rng, _rng = jax.random.split(rng)
+            policy_rng = jax.random.split(_rng, self.num_agents)
+            action, log_probs = jax.vmap(self.policy.get_actions)(policy_rng, obs, agent_params)
+
+            rng, _rng = jax.random.split(rng)
+            next_obs, next_state, reward, done, info = self.env.step(
+                _rng, state, action
+            )
+            new_valid_mask = valid_mask * (1 - done)
+            state_action = jnp.pad(obs[-1], (0, 1)).at[-1].set(action[-1])
+            lambda_ = lambda_.at[tuple(state_action)].set(lambda_[tuple(state_action)] + gamma)
+            carry = [
+                rng,
+                next_obs,
+                next_state,
+                agent_params,
+                new_valid_mask,
+                lambda_,
+                gamma * self.gamma
+            ]
+            transition = Transition(obs, action, reward, next_obs, done, log_probs)
+            if self.return_info:
+                return carry, (transition, info)
+            return carry, next_state.replace(done=done)
+
+        # Scan over episode step loop
+        carry_out, states = jax.lax.scan(
+            policy_step,
+            [
+                rng,
+                init_obs,
+                init_state,
+                agent_params,
+                jnp.int32(1.0),
+                jnp.zeros_like(agent_params[-1]),
+                jnp.float32(1.0),
+            ],
+            (),
+            self.eval_rollout_len if eval else self.train_rollout_len,
+        )
+        return states
 
     def adv_rollout(
         self, rng, agent_params, init_obs, init_state, eval=False
@@ -160,7 +207,7 @@ class RolloutWrapper:
                 init_obs,
                 init_state,
                 agent_params,
-                jnp.float32(1.0),
+                jnp.int32(1.0),
                 jnp.zeros_like(agent_params[-1]),
                 jnp.float32(1.0),
             ],

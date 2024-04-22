@@ -33,7 +33,7 @@ def compute_nash_gap(rng, args, policy, agent_params, rollout):
                 idx_fn = lambda idx: lambda_[tuple(idx)]
                 lambdas = jax.vmap(idx_fn)(idx)
 
-                loss = jax.vmap(fn)(data.reward[:, -1], lambdas, idx)
+                loss = jax.vmap(fn)(jnp.float32(data.reward[:, -1]), lambdas, idx)
 
                 disc = jnp.cumprod(jnp.ones_like(loss) * args.gamma) / args.gamma
                 return jnp.dot(loss, disc)
@@ -84,7 +84,7 @@ def compute_nash_gap(rng, args, policy, agent_params, rollout):
 
                     return jnp.dot(log_probs, returns)
                 
-                return jax.vmap(episode_loss, in_axes=(None, 0, 0, 0))(params, data.reward[:, idx], data.obs[:, idx], data.action[:, idx]).mean()
+                return jax.vmap(episode_loss, in_axes=(None, 0, 0, 0))(params, jnp.float32(data.reward[:, idx]), data.obs[:, idx], data.action[:, idx]).mean()
 
             grad = outer_loss(agent_params[idx], data, idx)
 
@@ -101,7 +101,7 @@ def compute_nash_gap(rng, args, policy, agent_params, rollout):
 
         return (data.reward.mean((0, 1)) - base)[idx]
 
-    rng = jax.random.split(rng, 2)
+    rng = jax.random.split(rng)
     team_gap = jax.vmap(train_single, in_axes=(0, None, 0))(rng, agent_params, jnp.arange(2))
 
     return jnp.concatenate((team_gap, adv_gap.reshape(1, )))
