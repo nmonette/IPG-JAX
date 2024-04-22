@@ -101,7 +101,7 @@ def compute_nash_gap(rng, args, policy, agent_params, rollout):
 
         return (data.reward.mean((0, 1)) - base)[idx]
 
-    rng = jax.random.split(rng, 2)
+    rng = jax.random.split(rng)
     team_gap = jax.vmap(train_single, in_axes=(0, None, 0))(rng, agent_params, jnp.arange(2))
 
     return jnp.concatenate((team_gap, adv_gap.reshape(1, )))

@@ -102,7 +102,13 @@ def make_train(args):
             rng, _rng = jax.random.split(rng)
 
             return (rng, agent_params), compute_nash_gap(_rng, args, policy, agent_params, rollout)
-
+        
+        # def run_fn(carry, _):
+            # start_time = time()
+            # vals = train_loop(carry, _)
+            # jax.debug.callback(lambda: print(time() - start_time))
+            # return vals 
+        
         carry_out, nash_gap = jax.lax.scan(train_loop, (rng, agent_params), jnp.arange(args.iters), args.iters)
 
         rng, agent_params = carry_out
@@ -120,7 +126,9 @@ def main(cmd=sys.argv[1:]):
     rng = jax.random.key(args.seed)
     train_fn = make_train(args)
     with jax.numpy_dtype_promotion('strict'):
-        nash_gap, agent_params, states = jax.jit(train_fn)(rng)
+        fn = jax.jit(train_fn)
+        nash_gap, agent_params, states = fn(rng)
+        nash_gap.block_until_ready()
 
 
     os.makedirs("output", exist_ok=True)

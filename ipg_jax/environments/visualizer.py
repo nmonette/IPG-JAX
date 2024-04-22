@@ -99,6 +99,7 @@ class GridVisualizer(object):
 
         self.goal1_removed = False
         self.goal2_removed = False
+        self.agents_removed = [False for _ in range(self.env.num_agents)]
         self.finished = False
 
 
@@ -136,8 +137,11 @@ class GridVisualizer(object):
             agent = jax.tree_util.tree_map(lambda a: a[idx], frame.agent)
             if agent.active:
                 artists.append(plot_object(agent))
-            else:
+            elif not agent.active and not self.agents_removed[idx]:
                 self.artists[idx].remove()
+                artists.append((0,0))
+                self.agents_removed[idx] = True
+            else:
                 artists.append((0,0))
 
         if frame.goal1.active:
