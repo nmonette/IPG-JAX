@@ -2,9 +2,9 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
-from environments import RolloutWrapper, GridVisualizer
-from agents.policy import DirectPolicy
-from utils import parse_args, compute_nash_gap
+from .environments import RolloutWrapper, GridVisualizer
+from .agents import DirectPolicy
+from .utils import parse_args, compute_nash_gap
 
 import sys, os
 
@@ -14,13 +14,15 @@ def make_train(args):
         param_dims = [args.dim, args.dim, args.dim, args.dim, 2, args.dim, args.dim, 2, 4]
 
         policy = DirectPolicy(param_dims, args.lr, args.eps)
-        agent_params = jax.vmap(policy.init_params)(jnp.arange(3))
+        rng, _rng = jax.random.split(rng)
+        _rng = jax.random.split(_rng, 3)
+        agent_params = jax.vmap(policy.init_params)(_rng)
         
         rollout = RolloutWrapper(policy, train_rollout_len=12, 
                                 env_kwargs={"dim":args.dim, "max_time":12}
                                 )
 
-        def train_loop(carry, iter):
+        def train_loop(carry, _):
             rng, agent_params = carry
             
             # Calculate adversarial best response
@@ -102,12 +104,7 @@ def make_train(args):
             rng, _rng = jax.random.split(rng)
 
             return (rng, agent_params), compute_nash_gap(_rng, args, policy, agent_params, rollout)
-        
-        # def run_fn(carry, _):
-            # start_time = time()
-            # vals = train_loop(carry, _)
-            # jax.debug.callback(lambda: print(time() - start_time))
-            # return vals 
+    
         
         carry_out, nash_gap = jax.lax.scan(train_loop, (rng, agent_params), jnp.arange(args.iters), args.iters)
 

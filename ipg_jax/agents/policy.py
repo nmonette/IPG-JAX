@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 from flax.struct import dataclass
-from utils.projection import projection_simplex_truncated as proj
+from ..utils import projection_simplex_truncated as proj
 
 class DirectPolicy:
     """
@@ -13,9 +13,10 @@ class DirectPolicy:
         self.lr = lr
         self.eps = eps
 
-    def init_params(self, _=None):
-        ones = jnp.ones(self.param_dims)
-        return ones * (1 / ones.shape[-1])
+    def init_params(self, rng, _=None):
+        # return jnp.full(self.param_dims, 1 / self.param_dims[-1])
+        initializer = jax.nn.initializers.orthogonal()
+        return proj(initializer(rng, self.param_dims), self.eps)
     
     def step(self, params, grad):
         return proj(params + self.lr * grad, self.eps)

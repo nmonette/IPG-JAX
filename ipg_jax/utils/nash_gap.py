@@ -3,13 +3,20 @@ import jax.numpy as jnp
 
 
 def compute_nash_gap(rng, args, policy, agent_params, rollout):
-
-    rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
-    init_obs, init_state = rollout.batch_reset(reset_rng, args.tr)
-    data, _, _, _ = rollout.batch_rollout(rollout_rng, agent_params, init_obs, init_state, adv=False)
-    
-    base = data.reward.mean((0, 1))
+    def avg_return(rng, params, idx):
         
+        rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
+        init_obs, init_state = rollout.batch_reset(reset_rng, args.rollout_length)
+        data, _, _, _ = rollout.batch_rollout(rollout_rng, params, init_obs, init_state, adv=False)
+
+        gamma = jnp.cumprod(jnp.full((data.reward.shape[2], ), args.gamma)) / args.gamma
+        
+        return jnp.dot(jnp.float32(data.reward[:, idx]), gamma).mean(axis=0)
+    
+    rng, _rng = jax.random.split(rng)
+    _rng = jax.random.split(rng, 3)
+    base = jax.vmap(avg_return, in_axes=(0, None, 0))(_rng, agent_params, jnp.arange(3))
+
     # Calculate adversarial best response
     def adv_br(carry, _):
         rng, agent_params = carry
@@ -51,19 +58,16 @@ def compute_nash_gap(rng, args, policy, agent_params, rollout):
 
     rng, adv_params = carry_out
 
-    rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
-    init_obs, init_state = rollout.batch_reset(reset_rng, args.tr)
-    data, _, _, _ = rollout.batch_rollout(rollout_rng, adv_params, init_obs, init_state, adv=False)
+    rng, _rng = jax.random.split(rng)
+    adv_gap = (avg_return(_rng, adv_params, -1) - base[-1])
     
-    adv_gap = (data.reward.mean((0, 1)) - base)[-1]
-
     # Update team
     def train_single(rng, agent_params, idx):
         def train_team(carry, _):
             rng, agent_params, idx = carry
 
             rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
-            init_obs, init_state = rollout.batch_reset(reset_rng, args.tr)
+            init_obs, init_state = rollout.batch_reset(reset_rng, args.rollout_length)
             data, _, _, _ = rollout.batch_rollout(rollout_rng, agent_params, init_obs, init_state, adv=False)
 
             @jax.grad
@@ -95,11 +99,9 @@ def compute_nash_gap(rng, args, policy, agent_params, rollout):
         carry_out, _ = jax.lax.scan(train_team, (rng, agent_params, idx), None, args.br_length)
         
         agent_params = carry_out[1]
-        rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
-        init_obs, init_state = rollout.batch_reset(reset_rng, args.tr)
-        data, _, _, _ = rollout.batch_rollout(rollout_rng, agent_params, init_obs, init_state, adv=False)
+        rng, _rng = jax.random.split(rng)
 
-        return (data.reward.mean((0, 1)) - base)[idx]
+        return (avg_return(_rng, agent_params, idx) - base[idx])
 
     rng = jax.random.split(rng)
     team_gap = jax.vmap(train_single, in_axes=(0, None, 0))(rng, agent_params, jnp.arange(2))

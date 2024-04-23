@@ -9,7 +9,7 @@ import jax.numpy as jnp
 from flax.struct import dataclass
 
 from .gridworld import AdvMultiGrid
-from agents import DirectPolicy
+from ..agents import DirectPolicy
 
 @dataclass
 class Transition:

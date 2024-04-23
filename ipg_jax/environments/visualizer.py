@@ -11,7 +11,6 @@ import matplotlib.pyplot as plt
 import gymnax
 
 from .gridworld import AdvMultiGrid
-from time import sleep
 
 class GridVisualizer(object):
     """Visualizer for Gymnax environments."""
