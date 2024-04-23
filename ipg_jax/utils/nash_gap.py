@@ -3,15 +3,16 @@ import jax.numpy as jnp
 
 
 def compute_nash_gap(rng, args, policy, agent_params, rollout):
+
     def avg_return(rng, params, idx):
         
         rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
         init_obs, init_state = rollout.batch_reset(reset_rng, args.rollout_length)
         data, _, _, _ = rollout.batch_rollout(rollout_rng, params, init_obs, init_state, adv=False)
 
-        gamma = jnp.cumprod(jnp.full((data.reward.shape[2], ), args.gamma)) / args.gamma
+        gamma = jnp.cumprod(jnp.full((data.reward.shape[1], ), args.gamma)) / args.gamma
         
-        return jnp.dot(jnp.float32(data.reward[:, idx]), gamma).mean(axis=0)
+        return jnp.dot(jnp.float32(data.reward[:,:,idx]), gamma).mean(axis=0)
     
     rng, _rng = jax.random.split(rng)
     _rng = jax.random.split(rng, 3)
@@ -64,14 +65,14 @@ def compute_nash_gap(rng, args, policy, agent_params, rollout):
     # Update team
     def train_single(rng, agent_params, idx):
         def train_team(carry, _):
-            rng, agent_params, idx = carry
+            rng, agent_params = carry
 
             rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
             init_obs, init_state = rollout.batch_reset(reset_rng, args.rollout_length)
             data, _, _, _ = rollout.batch_rollout(rollout_rng, agent_params, init_obs, init_state, adv=False)
 
             @jax.grad
-            def outer_loss(params, data, idx):
+            def outer_loss(params, data):
                 
                 def episode_loss(params, rewards, states, actions):
 
@@ -82,24 +83,28 @@ def compute_nash_gap(rng, args, policy, agent_params, rollout):
                         
                     returns, _ = jax.lax.scan(inner_returns, (jnp.zeros_like(rewards).at[-1].set(rewards[-1])), jnp.arange(rewards.shape[0]), reverse=True)
 
-                    idx = jnp.concatenate((states, actions.reshape(actions.shape[0], -1)), axis=-1)
+                    idx2 = jnp.concatenate((states, actions.reshape(actions.shape[0], -1)), axis=-1)
                     idx_fn = lambda idx: params[tuple(idx)]
-                    log_probs = jax.vmap(idx_fn)(idx)
+                    log_probs = jax.vmap(idx_fn)(idx2)
 
                     return jnp.dot(log_probs, returns)
-                
-                return jax.vmap(episode_loss, in_axes=(None, 0, 0, 0))(params, jnp.float32(data.reward[:, idx]), data.obs[:, idx], data.action[:, idx]).mean()
 
-            grad = outer_loss(agent_params[idx], data, idx)
+                return jax.vmap(episode_loss, in_axes=(None, 0, 0, 0))(params, jnp.float32(data.reward[:,:,idx]), data.obs[:, :, idx], data.action[:, :, idx]).mean()
+
+            grad = outer_loss(agent_params[idx], data)
+
+            # jax.lax.cond(jnp.logical_not(idx), lambda: jax.debug.print("{}", grad.sum()), lambda: None)
 
             agent_params = agent_params.at[idx].set(policy.step(agent_params[idx], grad))
 
-            return (rng, agent_params, idx), None
+            return (rng, agent_params), None
         
-        carry_out, _ = jax.lax.scan(train_team, (rng, agent_params, idx), None, args.br_length)
+        carry_out, _ = jax.lax.scan(train_team, (rng, agent_params), None, args.br_length)
         
         agent_params = carry_out[1]
         rng, _rng = jax.random.split(rng)
+
+        # jax.lax.cond(jnp.logical_not(idx), lambda: jax.debug.print("{}", avg_return(_rng, agent_params, idx)), lambda: None)
 
         return (avg_return(_rng, agent_params, idx) - base[idx])
 

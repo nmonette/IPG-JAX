@@ -90,7 +90,7 @@ def make_train(args):
 
                     return jnp.dot(log_probs, returns)
                 
-                return jax.vmap(episode_loss, in_axes=(None, 0, 0, 0))(params, jnp.float32(data.reward[:, idx]), data.obs[:, idx], data.action[:, idx]).mean()
+                return jax.vmap(episode_loss, in_axes=(None, 0, 0, 0))(params, jnp.float32(data.reward[:,:, idx]), data.obs[:,:, idx], data.action[:, :, idx]).mean()
 
             grads = jax.vmap(outer_loss, in_axes=(0, None, 0))(agent_params[:agent_params.shape[0] - 1], data, jnp.arange(agent_params.shape[0] - 1))
 
@@ -122,11 +122,14 @@ def main(cmd=sys.argv[1:]):
     args = parse_args(cmd)
     rng = jax.random.key(args.seed)
     train_fn = make_train(args)
+    import time 
+    start = time.time()
     with jax.numpy_dtype_promotion('strict'):
         fn = jax.jit(train_fn)
         nash_gap, agent_params, states = fn(rng)
         nash_gap.block_until_ready()
 
+    print(time.time() - start)
 
     os.makedirs("output", exist_ok=True)
     experiment_num = len(list(os.walk('./output')))
