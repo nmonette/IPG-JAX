@@ -1,6 +1,5 @@
 import jax
 import jax.numpy as jnp
-from flax.struct import dataclass
 from ..utils import projection_simplex_truncated as proj
 
 class DirectPolicy:
@@ -30,3 +29,6 @@ class DirectPolicy:
     def save_model(self, path):
         # use orbax for this
         pass
+
+    def get_agent_params(self, params, idx):
+        return params[idx]

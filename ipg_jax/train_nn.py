@@ -1,33 +1,58 @@
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+from optax import adam
 
 from .environments import RolloutWrapper, GridVisualizer
-from .agents import DirectPolicy
-from .utils import parse_args, compute_nash_gap
+from .agents import SELUPolicy
+from .utils import compute_nash_gap_nn as compute_nash_gap
 
-import sys, os
+import os
+from functools import partial
+import pickle
 
 def make_train(args):
     def ipg_train_fn(rng):
         # --- Instantiate Policy, Parameterizations, Rollout Manager ---
-        param_dims = [args.dim, args.dim, args.dim, args.dim, 2, args.dim, args.dim, 2, 4]
+        state_space = [args.dim, args.dim, args.dim, args.dim, 2, args.dim, args.dim, 2]
+        state_action_space = [args.dim, args.dim, args.dim, args.dim, 2, args.dim, args.dim, 2, 4]
 
-        policy = DirectPolicy(param_dims, args.lr, args.eps)
+        policy = SELUPolicy(args.eps, args.net_arch + [4], state_space)
         rng, _rng = jax.random.split(rng)
         _rng = jax.random.split(_rng, 3)
-        agent_params = jax.vmap(policy.init_params)(_rng)
-        
+
+        ex_state = jnp.array(state_space) - 1
+        agent_params = jax.vmap(policy.init, in_axes=(0, None))(_rng, ex_state)
+
+        optimizer = adam(args.lr)
+        optimizer_states = jax.vmap(optimizer.init)(agent_params)
+
+        # TEST CODE
+        """
+        def tree_change_at_idx(params, new_params, idx):
+            map_fn = lambda leaf, new_leaf, idx: leaf.at[idx].set(new_leaf)
+            
+            fn = partial(map_fn, idx=idx)
+            return jax.tree_map(fn, params, new_params)
+
+        opt0 = jax.tree_map(lambda x: x[0], optimizer_states)
+        x = tree_change_at_idx(optimizer_states, opt0, 0)
+        jax.debug.print("{}", x)
+        return
+        """
+
         rollout = RolloutWrapper(policy, train_rollout_len=12, 
-                                env_kwargs={"dim":args.dim, "max_time":12}
+                                env_kwargs={"dim":args.dim, "max_time":12},
+                                state_action_space=state_action_space,
+                                gamma=args.gamma,
                                 )
 
         def train_loop(carry, _):
-            rng, agent_params = carry
+            rng, agent_params, optimizer_states = carry
             
             # Calculate adversarial best response
             def adv_br(carry, _):
-                rng, agent_params = carry
+                rng, agent_params, optimizer_states = carry
 
                 # Collect rollouts
                 rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
@@ -41,30 +66,31 @@ def make_train(args):
                 def loss(params, data):
 
                     def inner_loss(data):
-                        
-                        fn = lambda r, l, idx: (r - args.nu * l) * jnp.log(params[tuple(idx)])
+
+                        fn = lambda r, l, lp: (r - args.nu * l) * lp
 
                         idx = jnp.concatenate((data.obs[:, -1], data.action[:, -1].reshape(data.action.shape[0], -1)), axis=-1)
                         idx_fn = lambda idx: lambda_[tuple(idx)]
                         lambdas = jax.vmap(idx_fn)(idx)
 
-                        loss = jax.vmap(fn)(jnp.float32(data.reward[:, -1]), lambdas, idx)
+                        loss = jax.vmap(fn)(jnp.float32(data.reward[:, -1]), lambdas, data.log_probs[:, -1])
 
                         disc = jnp.cumprod(jnp.ones_like(loss) * args.gamma) / args.gamma
                         return jnp.dot(loss, disc)
                     
                     return jax.vmap(inner_loss)(data).mean()
 
-                grad = loss(agent_params[-1], data)
-                agent_params = agent_params.at[-1].set(policy.step(agent_params[-1], grad))
+                grad = loss(policy.get_agent_params(agent_params, -1), data)
+                jax.debug.print("adv grad: {}", grad)
+                agent_params, optimizer_states = policy.step(agent_params, grad, optimizer, optimizer_states, -1)
 
-                return (rng, agent_params), None
+                return (rng, agent_params, optimizer_states), None
             
             # Run adversary's train loop 
             rng, _rng = jax.random.split(rng)
-            carry_out, _  = jax.lax.scan(adv_br, (_rng, agent_params), None, args.br_length)
+            carry_out, _  = jax.lax.scan(adv_br, (_rng, agent_params, optimizer_states), None, args.br_length)
 
-            rng, agent_params = carry_out
+            rng, agent_params, optimizer_states = carry_out
 
             # Update team
             # Collect rollouts
@@ -75,7 +101,7 @@ def make_train(args):
             @jax.grad
             def outer_loss(params, data, idx):
                 
-                def episode_loss(params, rewards, states, actions):
+                def episode_loss(log_probs, rewards):
 
                     def inner_returns(carry, i):
                         returns = carry
@@ -84,31 +110,30 @@ def make_train(args):
                         
                     returns, _ = jax.lax.scan(inner_returns, (jnp.zeros_like(rewards).at[-1].set(rewards[-1])), jnp.arange(rewards.shape[0]), reverse=True)
 
-                    idx = jnp.concatenate((states, actions.reshape(actions.shape[0], -1)), axis=-1)
-                    idx_fn = lambda idx: params[tuple(idx)]
-                    log_probs = jax.vmap(idx_fn)(idx)
-
                     return jnp.dot(log_probs, returns)
                 
-                return jax.vmap(episode_loss, in_axes=(None, 0, 0, 0))(params, jnp.float32(data.reward[:,:, idx]), data.obs[:,:, idx], data.action[:, :, idx]).mean()
+                return jax.vmap(episode_loss, in_axes=(0, 0))(data.log_probs[:,:, idx], jnp.float32(data.reward[:,:, idx])).mean()
 
-            grads = jax.vmap(outer_loss, in_axes=(0, None, 0))(agent_params[:agent_params.shape[0] - 1], data, jnp.arange(agent_params.shape[0] - 1))
-
-            def apply_grad(carry, idx):
-                agent_params = carry
-
-                return agent_params.at[idx].set(policy.step(agent_params[idx], grads[idx])), None
+            grads = jax.vmap(outer_loss, in_axes=(0, None, 0))(policy.get_agent_params(agent_params, slice(0, rollout.num_agents - 1)), data, jnp.arange(rollout.num_agents - 1))
             
-            agent_params, _ = jax.lax.scan(apply_grad, agent_params, jnp.arange(agent_params.shape[0] - 1))
+            jax.debug.print("team grads: {}", grads)
+
+            def apply_grad(carry, grad):
+                agent_params, optimizer_states, idx = carry
+                agent_params, optimizer_states = policy.step(agent_params, grad, optimizer, optimizer_states, idx)
+                return (agent_params, optimizer_states, idx+1), None
             
+            carry_out, _ = jax.lax.scan(apply_grad, (agent_params, optimizer_states, 0), grads)
+            agent_params, optimizer_states, idx = carry_out
+
             rng, _rng = jax.random.split(rng)
 
-            return (rng, agent_params), compute_nash_gap(_rng, args, policy, agent_params, rollout)
+            return (rng, agent_params, optimizer_states), compute_nash_gap(_rng, args, policy, agent_params, rollout, optimizer, optimizer_states)
     
         
-        carry_out, nash_gap = jax.lax.scan(train_loop, (rng, agent_params), jnp.arange(args.iters), args.iters)
+        carry_out, nash_gap = jax.lax.scan(train_loop, (rng, agent_params, optimizer_states), jnp.arange(args.iters), args.iters)
 
-        rng, agent_params = carry_out
+        rng, agent_params, optimizer_states = carry_out
 
         rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
         init_obs, init_state = rollout.env.reset(reset_rng)
@@ -123,10 +148,10 @@ def main(args):
     train_fn = make_train(args)
     import time 
     start = time.time()
-    with jax.numpy_dtype_promotion('strict'):
-        fn = jax.jit(train_fn)
-        nash_gap, agent_params, states = fn(rng)
-        nash_gap.block_until_ready()
+    # with jax.numpy_dtype_promotion('strict'):
+    fn = jax.jit(train_fn)
+    nash_gap, agent_params, states = fn(rng)
+    nash_gap.block_until_ready()
 
     print(time.time() - start)
 
@@ -142,7 +167,9 @@ def main(args):
         gv.animate(f"output/experiment-{experiment_num}/game.gif", view=True)
 
     for agent in range(len(agent_params)):
-        jnp.save(f"output/experiment-{experiment_num}/agent{agent+1}", agent_params[agent])
+        params = jax.tree_map(lambda x: x[agent], agent_params)
+        with open(f"output/experiment-{experiment_num}/agent{agent+1}.pickle", 'wb') as file:
+            pickle.dump(params, file)
 
     nash_gap = jnp.max(nash_gap, 1)
     plt.plot(nash_gap)

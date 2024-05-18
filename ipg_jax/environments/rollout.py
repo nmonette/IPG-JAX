@@ -30,7 +30,8 @@ class RolloutWrapper:
         env_kwargs: dict = {},
         return_info: bool = False,
         num_agents: int = 3, 
-        gamma: float = 0.9
+        gamma: float = 0.9,
+        state_action_space = None
     ):
         """
         env_name (str): Name of environment to use.
@@ -49,6 +50,7 @@ class RolloutWrapper:
         self.train_rollout_len = train_rollout_len
         self.eval_rollout_len = eval_rollout_len
         self.return_info = return_info
+        self.state_action_space = state_action_space
 
     # --- ENVIRONMENT RESET ---
     def batch_reset(self, rng, num_workers):
@@ -76,7 +78,6 @@ class RolloutWrapper:
         self, rng, agent_params, init_obs, init_state, eval=False
     ):
         """Rollout an episode."""
-
         def policy_step(state_input, _):
             rng, obs, state, agent_params, valid_mask = state_input
             rng, _rng = jax.random.split(rng)
@@ -160,7 +161,7 @@ class RolloutWrapper:
                 init_state,
                 agent_params,
                 jnp.int32(1.0),
-                jnp.zeros_like(agent_params[-1]),
+                jnp.zeros_like(self.policy.get_agent_params(agent_params, -1)) if self.state_action_space is None else jnp.zeros(self.state_action_space),
                 jnp.float32(1.0),
             ],
             (),
@@ -208,7 +209,7 @@ class RolloutWrapper:
                 init_state,
                 agent_params,
                 jnp.int32(1.0),
-                jnp.zeros_like(agent_params[-1]),
+                jnp.zeros_like(self.policy.get_agent_params(agent_params, -1)) if self.state_action_space is None else jnp.zeros(self.state_action_space),
                 jnp.float32(1.0),
             ],
             (),
