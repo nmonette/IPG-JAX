@@ -10,7 +10,7 @@ from matplotlib import animation
 import matplotlib.pyplot as plt
 import gymnax
 
-from gridworld import AdvMultiGrid
+from .gridworld import AdvMultiGrid
 
 class GridVisualizer(object):
     """Visualizer for Gymnax environments."""
