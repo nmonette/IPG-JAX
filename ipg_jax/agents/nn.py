@@ -46,7 +46,6 @@ class SELUPolicy(nn.Module):
     
     @staticmethod
     def tree_change_at_idx(params, new_params, idx):
-        jax.debug.print("{}", jax.tree_map(lambda x: x[idx], params))
         map_fn = lambda leaf, new_leaf, idx: leaf.at[idx].set(new_leaf)
         
         fn = partial(map_fn, idx=idx)

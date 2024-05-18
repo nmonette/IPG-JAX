@@ -27,20 +27,6 @@ def make_train(args):
         optimizer = adam(args.lr)
         optimizer_states = jax.vmap(optimizer.init)(agent_params)
 
-        # TEST CODE
-        """
-        def tree_change_at_idx(params, new_params, idx):
-            map_fn = lambda leaf, new_leaf, idx: leaf.at[idx].set(new_leaf)
-            
-            fn = partial(map_fn, idx=idx)
-            return jax.tree_map(fn, params, new_params)
-
-        opt0 = jax.tree_map(lambda x: x[0], optimizer_states)
-        x = tree_change_at_idx(optimizer_states, opt0, 0)
-        jax.debug.print("{}", x)
-        return
-        """
-
         rollout = RolloutWrapper(policy, train_rollout_len=12, 
                                 env_kwargs={"dim":args.dim, "max_time":12},
                                 state_action_space=state_action_space,
@@ -54,21 +40,20 @@ def make_train(args):
             def adv_br(carry, _):
                 rng, agent_params, optimizer_states = carry
 
-                # Collect rollouts
-                rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
-                init_obs, init_state = rollout.batch_reset(reset_rng, args.rollout_length)
-                data, _, _, _, lambda_ = rollout.batch_rollout(rollout_rng, agent_params, init_obs, init_state, adv=True)
-
-                lambda_ = lambda_.mean(axis=0)
-                
                 # Calculate Gradients
                 @jax.grad
-                def loss(params, data):
+                def loss(agent_params, rng):
+                    # Collect rollouts
+                    rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
+                    init_obs, init_state = rollout.batch_reset(reset_rng, args.rollout_length)
+                    data, _, _, _, lambda_ = rollout.batch_rollout(rollout_rng, agent_params, init_obs, init_state, adv=True)
 
+                    lambda_ = lambda_.mean(axis=0)
+                    
                     def inner_loss(data):
 
                         fn = lambda r, l, lp: (r - args.nu * l) * lp
-
+                        
                         idx = jnp.concatenate((data.obs[:, -1], data.action[:, -1].reshape(data.action.shape[0], -1)), axis=-1)
                         idx_fn = lambda idx: lambda_[tuple(idx)]
                         lambdas = jax.vmap(idx_fn)(idx)
@@ -80,8 +65,7 @@ def make_train(args):
                     
                     return jax.vmap(inner_loss)(data).mean()
 
-                grad = loss(policy.get_agent_params(agent_params, -1), data)
-                jax.debug.print("adv grad: {}", grad)
+                grad = jax.tree_map(lambda x: x[-1], loss(agent_params, rng))
                 agent_params, optimizer_states = policy.step(agent_params, grad, optimizer, optimizer_states, -1)
 
                 return (rng, agent_params, optimizer_states), None
@@ -91,16 +75,16 @@ def make_train(args):
             carry_out, _  = jax.lax.scan(adv_br, (_rng, agent_params, optimizer_states), None, args.br_length)
 
             rng, agent_params, optimizer_states = carry_out
-
+            
             # Update team
-            # Collect rollouts
-            rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
-            init_obs, init_state = rollout.batch_reset(reset_rng, args.tr)
-            data, _, _, _ = rollout.batch_rollout(rollout_rng, agent_params, init_obs, init_state, adv=False)
 
             @jax.grad
-            def outer_loss(params, data, idx):
-                
+            def outer_loss(agent_params, rng, idx):
+                # Collect rollouts
+                rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
+                init_obs, init_state = rollout.batch_reset(reset_rng, args.tr)
+                data, _, _, _ = rollout.batch_rollout(rollout_rng, agent_params, init_obs, init_state, adv=False)
+
                 def episode_loss(log_probs, rewards):
 
                     def inner_returns(carry, i):
@@ -114,10 +98,8 @@ def make_train(args):
                 
                 return jax.vmap(episode_loss, in_axes=(0, 0))(data.log_probs[:,:, idx], jnp.float32(data.reward[:,:, idx])).mean()
 
-            grads = jax.vmap(outer_loss, in_axes=(0, None, 0))(policy.get_agent_params(agent_params, slice(0, rollout.num_agents - 1)), data, jnp.arange(rollout.num_agents - 1))
+            grads = jax.vmap(lambda p, r, i: jax.tree_map(lambda x: x[i], outer_loss(p,r,i)), in_axes=(None, None, 0))(agent_params, rng, jnp.arange(rollout.num_agents - 1))
             
-            jax.debug.print("team grads: {}", grads)
-
             def apply_grad(carry, grad):
                 agent_params, optimizer_states, idx = carry
                 agent_params, optimizer_states = policy.step(agent_params, grad, optimizer, optimizer_states, idx)
