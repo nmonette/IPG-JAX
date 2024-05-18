@@ -63,7 +63,7 @@ def make_train(args):
                         disc = jnp.cumprod(jnp.ones_like(loss) * args.gamma) / args.gamma
                         return jnp.dot(loss, disc)
                     
-                    return jax.vmap(inner_loss)(data).mean()
+                    return -jax.vmap(inner_loss)(data).mean()
 
                 grad = jax.tree_map(lambda x: x[-1], loss(agent_params, rng))
                 agent_params, optimizer_states = policy.step(agent_params, grad, optimizer, optimizer_states, -1)
@@ -96,7 +96,7 @@ def make_train(args):
 
                     return jnp.dot(log_probs, returns)
                 
-                return jax.vmap(episode_loss, in_axes=(0, 0))(data.log_probs[:,:, idx], jnp.float32(data.reward[:,:, idx])).mean()
+                return -jax.vmap(episode_loss, in_axes=(0, 0))(data.log_probs[:,:, idx], jnp.float32(data.reward[:,:, idx])).mean()
 
             grads = jax.vmap(lambda p, r, i: jax.tree_map(lambda x: x[i], outer_loss(p,r,i)), in_axes=(None, None, 0))(agent_params, rng, jnp.arange(rollout.num_agents - 1))
             
