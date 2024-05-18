@@ -148,7 +148,7 @@ def main(args):
         gv = GridVisualizer({"dim": args.dim, "max_time":12}, states_new, None)
         gv.animate(f"output/experiment-{experiment_num}/game.gif", view=True)
 
-    for agent in range(len(agent_params)):
+    for agent in range(3):
         params = jax.tree_map(lambda x: x[agent], agent_params)
         with open(f"output/experiment-{experiment_num}/agent{agent+1}.pickle", 'wb') as file:
             pickle.dump(params, file)

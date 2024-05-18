@@ -10,7 +10,7 @@ from matplotlib import animation
 import matplotlib.pyplot as plt
 import gymnax
 
-from .gridworld import AdvMultiGrid
+from gridworld import AdvMultiGrid
 
 class GridVisualizer(object):
     """Visualizer for Gymnax environments."""
@@ -21,7 +21,7 @@ class GridVisualizer(object):
         self.state_seq = state_seq_arg
         self.reward_seq = reward_seq_arg
         self.fig, self.ax = plt.subplots(1, 1, figsize=(5, 5))
-        self.interval = 200 # self.env.max_time
+        self.interval = 200 
         self.artists = []
 
     def animate(
