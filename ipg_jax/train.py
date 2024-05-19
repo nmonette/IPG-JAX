@@ -29,19 +29,19 @@ def make_train(args):
             def adv_br(carry, _):
                 rng, agent_params = carry
 
-                # Collect rollouts
-                rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
-                init_obs, init_state = rollout.batch_reset(reset_rng, args.rollout_length)
-                data, _, _, _, lambda_ = rollout.batch_rollout(rollout_rng, agent_params, init_obs, init_state, adv=True)
 
-                lambda_ = lambda_.mean(axis=0)
-                
                 # Calculate Gradients
                 @jax.grad
-                def loss(params, data):
+                def loss(params, rng):
 
-                    def inner_loss(data):
-                        
+                    def inner_loss(data, rng):
+                        # Collect rollouts
+                        rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
+                        init_obs, init_state = rollout.batch_reset(reset_rng, args.rollout_length)
+                        data, _, _, _, lambda_ = rollout.batch_rollout(rollout_rng, agent_params, init_obs, init_state, adv=True)
+
+                        lambda_ = lambda_.mean(axis=0)
+    
                         fn = lambda r, l, idx: (r - args.nu * l) * jnp.log(params[tuple(idx)])
 
                         idx = jnp.concatenate((data.obs[:, -1], data.action[:, -1].reshape(data.action.shape[0], -1)), axis=-1)
@@ -55,7 +55,7 @@ def make_train(args):
                     
                     return jax.vmap(inner_loss)(data).mean()
 
-                grad = loss(agent_params[-1], data)
+                grad = loss(agent_params[-1])[-1]
                 agent_params = agent_params.at[-1].set(policy.step(agent_params[-1], grad))
 
                 return (rng, agent_params), None

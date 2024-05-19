@@ -23,21 +23,20 @@ def compute_nash_gap(rng, args, policy, agent_params, rollout, optimizer, optimi
     def adv_br(carry, _):
         rng, agent_params, optimizer_states = carry
 
-        # Collect rollouts
-        rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
-        init_obs, init_state = rollout.batch_reset(reset_rng, args.rollout_length)
-        data, _, _, _, lambda_ = rollout.batch_rollout(rollout_rng, agent_params, init_obs, init_state, adv=True)
-
-        lambda_ = lambda_.mean(axis=0)
-        
         # Calculate Gradients
         @jax.grad
-        def loss(params, data):
+        def loss(agent_params, rng):
+            # Collect rollouts
+            rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
+            init_obs, init_state = rollout.batch_reset(reset_rng, args.rollout_length)
+            data, _, _, _, lambda_ = rollout.batch_rollout(rollout_rng, agent_params, init_obs, init_state, adv=True)
 
+            lambda_ = lambda_.mean(axis=0)
+            
             def inner_loss(data):
-                
-                fn = lambda r, l, lp: (r - args.nu * l) * lp
 
+                fn = lambda r, l, lp: (r - args.nu * l) * lp
+                
                 idx = jnp.concatenate((data.obs[:, -1], data.action[:, -1].reshape(data.action.shape[0], -1)), axis=-1)
                 idx_fn = lambda idx: lambda_[tuple(idx)]
                 lambdas = jax.vmap(idx_fn)(idx)
@@ -47,9 +46,9 @@ def compute_nash_gap(rng, args, policy, agent_params, rollout, optimizer, optimi
                 disc = jnp.cumprod(jnp.ones_like(loss) * args.gamma) / args.gamma
                 return jnp.dot(loss, disc)
             
-            return jax.vmap(inner_loss)(data).mean()
+            return -jax.vmap(inner_loss)(data).mean()
 
-        grad = loss(policy.get_agent_params(agent_params, -1), data)
+        grad = jax.tree_map(lambda x: x[-1], loss(agent_params, rng))
         agent_params, optimizer_states = policy.step(agent_params, grad, optimizer, optimizer_states, -1)
 
         return (rng, agent_params, optimizer_states), None
@@ -68,12 +67,11 @@ def compute_nash_gap(rng, args, policy, agent_params, rollout, optimizer, optimi
         def train_team(carry, _):
             rng, agent_params, optimizer_states = carry
 
-            rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
-            init_obs, init_state = rollout.batch_reset(reset_rng, args.rollout_length)
-            data, _, _, _ = rollout.batch_rollout(rollout_rng, agent_params, init_obs, init_state, adv=False)
-
             @jax.grad
-            def outer_loss(params, data):
+            def outer_loss(agent_params, rng):
+                rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
+                init_obs, init_state = rollout.batch_reset(reset_rng, args.rollout_length)
+                data, _, _, _ = rollout.batch_rollout(rollout_rng, agent_params, init_obs, init_state, adv=False)
                 
                 def episode_loss(rewards, log_probs):
 
@@ -86,9 +84,9 @@ def compute_nash_gap(rng, args, policy, agent_params, rollout, optimizer, optimi
 
                     return jnp.dot(log_probs, returns)
 
-                return jax.vmap(episode_loss)(jnp.float32(data.reward[:,:,idx]), data.log_probs[:,:,idx]).mean()
+                return -jax.vmap(episode_loss)(jnp.float32(data.reward[:,:,idx]), data.log_probs[:,:,idx]).mean()
 
-            grad = outer_loss(policy.get_agent_params(agent_params, idx), data)
+            grad = jax.tree_map(lambda x: x[idx], outer_loss(agent_params, rng))
 
             # jax.lax.cond(jnp.logical_not(idx), lambda: jax.debug.print("{}", grad.sum()), lambda: None)
            
