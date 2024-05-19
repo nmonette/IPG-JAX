@@ -42,7 +42,7 @@ def compute_nash_gap(rng, args, policy, agent_params, rollout, optimizer, optimi
                 idx_fn = lambda idx: lambda_[tuple(idx)]
                 lambdas = jax.vmap(idx_fn)(idx)
 
-                loss = jax.vmap(fn)(jnp.float32(data.reward[:, -1]), lambdas, data.log_probs[:, -1])
+                loss = jax.vmap(fn)(jnp.float32(data.reward[:, -1]), lambdas, jnp.cumsum(data.log_probs[:, -1]))
 
                 disc = jnp.cumprod(jnp.ones_like(loss) * args.gamma) / args.gamma
                 return jnp.dot(loss, disc)
