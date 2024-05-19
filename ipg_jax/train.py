@@ -54,7 +54,8 @@ def make_train(args):
                     
                     return jax.vmap(inner_loss)(data).mean()
 
-                grad = loss(agent_params, rng)[-1]
+                rng, _rng = jax.random.split(rng)
+                grad = loss(agent_params, _rng)[-1]
                 agent_params = agent_params.at[-1].set(policy.step(agent_params[-1], grad))
 
                 return (rng, agent_params), None
@@ -66,15 +67,14 @@ def make_train(args):
             rng, agent_params = carry_out
 
             # Update team
-            # Collect rollouts
-            rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
-            init_obs, init_state = rollout.batch_reset(reset_rng, args.tr)
-            data, _, _, _ = rollout.batch_rollout(rollout_rng, agent_params, init_obs, init_state, adv=False)
-
             @jax.grad
-            def outer_loss(params, data, idx):
-                
-                def episode_loss(params, rewards, states, actions):
+            def outer_loss(agent_params, rng, idx):
+                # Collect rollouts
+                rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
+                init_obs, init_state = rollout.batch_reset(reset_rng, args.tr)
+                data, _, _, _ = rollout.batch_rollout(rollout_rng, agent_params, init_obs, init_state, adv=False)
+
+                def episode_loss(log_probs, rewards):
 
                     def inner_returns(carry, i):
                         returns = carry
@@ -83,15 +83,14 @@ def make_train(args):
                         
                     returns, _ = jax.lax.scan(inner_returns, (jnp.zeros_like(rewards).at[-1].set(rewards[-1])), jnp.arange(rewards.shape[0]), reverse=True)
 
-                    idx = jnp.concatenate((states, actions.reshape(actions.shape[0], -1)), axis=-1)
-                    idx_fn = lambda idx: params[tuple(idx)]
-                    log_probs = jax.vmap(idx_fn)(idx)
-
                     return jnp.dot(log_probs, returns)
                 
-                return jax.vmap(episode_loss, in_axes=(None, 0, 0, 0))(params, jnp.float32(data.reward[:,:, idx]), data.obs[:,:, idx], data.action[:, :, idx]).mean()
+                return jax.vmap(episode_loss, in_axes=(0, 0))(data.log_probs[:,:, idx], jnp.float32(data.reward[:,:, idx])).mean()
 
-            grads = jax.vmap(outer_loss, in_axes=(0, None, 0))(agent_params[:agent_params.shape[0] - 1], data, jnp.arange(agent_params.shape[0] - 1))
+            rng, _rng = jax.random.split(rng)
+            _rng = jax.random.split(_rng, rollout.num_agents - 1)
+
+            grads = jax.vmap(lambda p, r, i: outer_loss(p, r, i)[i], in_axes=(None, 0, 0))(agent_params, _rng, jnp.arange(agent_params.shape[0] - 1))
 
             def apply_grad(carry, idx):
                 agent_params = carry
@@ -103,7 +102,6 @@ def make_train(args):
             rng, _rng = jax.random.split(rng)
 
             return (rng, agent_params), compute_nash_gap(_rng, args, policy, agent_params, rollout)
-    
         
         carry_out, nash_gap = jax.lax.scan(train_loop, (rng, agent_params), jnp.arange(args.iters), args.iters)
 

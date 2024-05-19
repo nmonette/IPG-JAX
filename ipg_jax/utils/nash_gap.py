@@ -47,7 +47,8 @@ def compute_nash_gap(rng, args, policy, agent_params, rollout):
             
             return jax.vmap(inner_loss)(data).mean()
 
-        grad = loss(agent_params, rng)[-1]
+        rng, _rng = jax.random.split(rng)
+        grad = loss(agent_params, _rng)[-1]
         agent_params = agent_params.at[-1].set(policy.step(agent_params[-1], grad))
 
         return (rng, agent_params), None
@@ -66,14 +67,13 @@ def compute_nash_gap(rng, args, policy, agent_params, rollout):
         def train_team(carry, _):
             rng, agent_params = carry
 
-            rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
-            init_obs, init_state = rollout.batch_reset(reset_rng, args.rollout_length)
-            data, _, _, _ = rollout.batch_rollout(rollout_rng, agent_params, init_obs, init_state, adv=False)
-
             @jax.grad
-            def outer_loss(params, data):
+            def outer_loss(agent_params, rng):
+                rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
+                init_obs, init_state = rollout.batch_reset(reset_rng, args.rollout_length)
+                data, _, _, _ = rollout.batch_rollout(rollout_rng, agent_params, init_obs, init_state, adv=False)
                 
-                def episode_loss(params, rewards, states, actions):
+                def episode_loss(log_probs, rewards):
 
                     def inner_returns(carry, i):
                         returns = carry
@@ -82,15 +82,12 @@ def compute_nash_gap(rng, args, policy, agent_params, rollout):
                         
                     returns, _ = jax.lax.scan(inner_returns, (jnp.zeros_like(rewards).at[-1].set(rewards[-1])), jnp.arange(rewards.shape[0]), reverse=True)
 
-                    idx2 = jnp.concatenate((states, actions.reshape(actions.shape[0], -1)), axis=-1)
-                    idx_fn = lambda idx: params[tuple(idx)]
-                    log_probs = jax.vmap(idx_fn)(idx2)
-
                     return jnp.dot(log_probs, returns)
+                
+                return jax.vmap(episode_loss, in_axes=(0, 0))(data.log_probs[:,:, idx], jnp.float32(data.reward[:,:, idx])).mean()
 
-                return jax.vmap(episode_loss, in_axes=(None, 0, 0, 0))(params, jnp.float32(data.reward[:,:,idx]), data.obs[:, :, idx], data.action[:, :, idx]).mean()
-
-            grad = outer_loss(agent_params[idx], data)
+            rng, _rng = jax.random.split(rng)
+            grad = outer_loss(agent_params, _rng)[idx]
 
             # jax.lax.cond(jnp.logical_not(idx), lambda: jax.debug.print("{}", grad.sum()), lambda: None)
 

@@ -65,7 +65,8 @@ def make_train(args):
                     
                     return -jax.vmap(inner_loss)(data).mean()
 
-                grad = jax.tree_map(lambda x: x[-1], loss(agent_params, rng))
+                rng, _rng = jax.random.split(rng)
+                grad = jax.tree_map(lambda x: x[-1], loss(agent_params, _rng))
                 agent_params, optimizer_states = policy.step(agent_params, grad, optimizer, optimizer_states, -1)
 
                 return (rng, agent_params, optimizer_states), None
@@ -98,7 +99,10 @@ def make_train(args):
                 
                 return -jax.vmap(episode_loss, in_axes=(0, 0))(data.log_probs[:,:, idx], jnp.float32(data.reward[:,:, idx])).mean()
 
-            grads = jax.vmap(lambda p, r, i: jax.tree_map(lambda x: x[i], outer_loss(p,r,i)), in_axes=(None, None, 0))(agent_params, rng, jnp.arange(rollout.num_agents - 1))
+            rng, _rng = jax.random.split(rng)
+            _rng = jax.random.split(_rng, rollout.num_agents - 1)
+
+            grads = jax.vmap(lambda p, r, i: jax.tree_map(lambda x: x[i], outer_loss(p,r,i)), in_axes=(None, None, 0))(agent_params, _rng, jnp.arange(rollout.num_agents - 1))
             
             def apply_grad(carry, grad):
                 agent_params, optimizer_states, idx = carry
@@ -106,7 +110,7 @@ def make_train(args):
                 return (agent_params, optimizer_states, idx+1), None
             
             carry_out, _ = jax.lax.scan(apply_grad, (agent_params, optimizer_states, 0), grads)
-            agent_params, optimizer_states, idx = carry_out
+            agent_params, optimizer_states, _ = carry_out
 
             rng, _rng = jax.random.split(rng)
 

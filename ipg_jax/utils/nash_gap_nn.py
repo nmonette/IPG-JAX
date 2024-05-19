@@ -48,7 +48,8 @@ def compute_nash_gap(rng, args, policy, agent_params, rollout, optimizer, optimi
             
             return -jax.vmap(inner_loss)(data).mean()
 
-        grad = jax.tree_map(lambda x: x[-1], loss(agent_params, rng))
+        rng, _rng = jax.random.split(rng)
+        grad = jax.tree_map(lambda x: x[-1], loss(agent_params, _rng))
         agent_params, optimizer_states = policy.step(agent_params, grad, optimizer, optimizer_states, -1)
 
         return (rng, agent_params, optimizer_states), None
@@ -86,7 +87,8 @@ def compute_nash_gap(rng, args, policy, agent_params, rollout, optimizer, optimi
 
                 return -jax.vmap(episode_loss)(jnp.float32(data.reward[:,:,idx]), data.log_probs[:,:,idx]).mean()
 
-            grad = jax.tree_map(lambda x: x[idx], outer_loss(agent_params, rng))
+            rng, _rng = jax.random.split(rng)
+            grad = jax.tree_map(lambda x: x[idx], outer_loss(agent_params, _rng))
 
             # jax.lax.cond(jnp.logical_not(idx), lambda: jax.debug.print("{}", grad.sum()), lambda: None)
            
