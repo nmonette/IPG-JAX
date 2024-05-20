@@ -8,10 +8,12 @@ from flax.linen.activation import selu
 import flax.linen as nn
 import optax
 
+from typing import Union
+
 class SELUPolicy(nn.Module):
     eps: float
     arch: list[int]
-    state_space: list[int]
+    state_space: Union[list[int], str]
 
     def setup(self):
         self.layers = [nn.Dense(s) for s in self.arch]
@@ -19,13 +21,16 @@ class SELUPolicy(nn.Module):
     def encode_state(self, x):
         if len(x.shape) == 1:
             x = x.reshape(1, x.shape[0])
-        obs = jnp.concatenate(
-            [
-                jax.nn.one_hot(obs_, num_classes=int(self.state_space[idx]))
-                for idx, obs_ in enumerate(jnp.split(x, 1, axis=1))
-            ],
-            axis=-1,
-        ).reshape(x.shape[0], -1)
+        if self.state_space != "c":
+            obs = jnp.concatenate(
+                [
+                    jax.nn.one_hot(obs_, num_classes=int(self.state_space[idx]))
+                    for idx, obs_ in enumerate(jnp.split(x, 1, axis=1))
+                ],
+                axis=-1,
+            ).reshape(x.shape[0], -1)
+        else:
+            obs = x
         return obs
 
     def __call__(self, x):

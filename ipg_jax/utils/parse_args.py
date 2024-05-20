@@ -93,7 +93,7 @@ def parse_args(cmd_args=sys.argv[1:]):
         "-s", "--seed", type=int, default=0, dest="seed"
     )
     parser.add_argument(
-        "-p", "--parameterization",help="Parameterization type", default="direct", dest="param", choices=["direct", "nn"]
+        "-p", "--parameterization",help="Parameterization type", default="direct", dest="param", choices=["direct", "nn", "c"]
     )
     args, _ = parser.parse_known_args(cmd_args)
 

@@ -1,8 +1,6 @@
 import jax
 import jax.numpy as jnp
 
-from functools import partial
-
 def compute_nash_gap(rng, args, policy, agent_params, rollout, optimizer, optimizer_states):
 
     def avg_return(rng, params, idx):
