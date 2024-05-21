@@ -31,7 +31,8 @@ def compute_nash_gap(rng, args, policy, adv_params, team_params, rollout, optimi
             data, _, _, _ = rollout.batch_rollout(rollout_rng, adv_params, team_params, init_obs, init_state)
 
             lambda_data = jnp.concatenate([data.obs["adversary_0"].reshape(-1, len(adv_state_space)), data.action[:,:,-1].reshape(-1, 1)], axis=-1)
-            lambda_ = jax.scipy.stats.gaussian_kde(lambda_data.T)
+            lambda_weights = jnp.repeat(jnp.cumprod(jnp.full((25, ), args.gamma)) / args.gamma, args.rollout_length)
+            lambda_ = jax.scipy.stats.gaussian_kde(lambda_data.T, weights=lambda_weights)
 
             def inner_loss(data):
 
