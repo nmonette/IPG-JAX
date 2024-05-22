@@ -6,13 +6,15 @@ from .environments import RolloutWrapper, GridVisualizer
 from .agents import DirectPolicy
 from .utils import parse_args, compute_nash_gap
 
+from functools import partial
+
 import sys, os
 
 def make_train(args):
     def ipg_train_fn(rng):
         # --- Instantiate Policy, Parameterizations, Rollout Manager ---
         # param_dims = [args.dim, args.dim, args.dim, args.dim, 2, args.dim, args.dim, 2, 4]
-        param_dims = [3, 3]
+        param_dims = [2, 2]
         policy = DirectPolicy(param_dims, args.lr, args.eps)
         rng, _rng = jax.random.split(rng)
         _rng = jax.random.split(_rng, 3)
@@ -22,8 +24,8 @@ def make_train(args):
         #                         env_kwargs={"dim":args.dim, "max_time":12}
         #                         )
 
-        rollout = RolloutWrapper(policy, train_rollout_len=5, 
-                                    env_kwargs={"num_states":3, "num_agents":3, "num_actions":3, "num_timesteps":5},
+        rollout = RolloutWrapper(policy, train_rollout_len=1, 
+                                    env_kwargs={"num_states":2, "num_agents":3, "num_actions":2, "num_timesteps":5},
                                     env_name="rps"
                                 )
 
@@ -35,7 +37,7 @@ def make_train(args):
                 rng, agent_params = carry
 
                 # Calculate Gradients
-                @jax.grad
+                @partial(jax.grad, has_aux=True)
                 def loss(agent_params, rng):
                     # Collect rollouts
                     rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
@@ -55,21 +57,26 @@ def make_train(args):
                         loss = jax.vmap(fn)(jnp.float32(data.reward[:, -1]), lambdas, jnp.cumsum(data.log_probs[:, -1]))
 
                         disc = jnp.cumprod(jnp.ones_like(loss) * args.gamma) / args.gamma
-                        return jnp.dot(loss, disc)
+                        return jnp.dot(loss, disc), jnp.dot(data.reward[:, -1], disc)
                     
-                    return jax.vmap(inner_loss)(data).mean()
+                    grad, val =  jax.vmap(inner_loss)(data)
+                    
+                    return grad.mean(), val.mean()
 
                 rng, _rng = jax.random.split(rng)
-                grad = loss(agent_params, _rng)[-1]
+                grad, val = loss(agent_params, _rng)
+                grad = grad[-1]
                 agent_params = agent_params.at[-1].set(policy.step(agent_params[-1], grad))
 
-                return (rng, agent_params), None
+                return (rng, agent_params), (agent_params[-1], val)
             
             # Run adversary's train loop 
             rng, _rng = jax.random.split(rng)
-            carry_out, _  = jax.lax.scan(adv_br, (_rng, agent_params), None, args.br_length)
+            _, (adv_params, val)  = jax.lax.scan(adv_br, (_rng, agent_params), None, args.br_length)
 
-            rng, agent_params = carry_out
+            # Best Iterate of Adversary BR 
+            idx = jnp.argmax(val) - 1
+            agent_params = agent_params.at[-1].set(adv_params[jnp.where(idx > 0, idx, 0)])
 
             # Update team
             @jax.grad
@@ -105,6 +112,11 @@ def make_train(args):
             agent_params, _ = jax.lax.scan(apply_grad, agent_params, jnp.arange(agent_params.shape[0] - 1))
             
             rng, _rng = jax.random.split(rng)
+
+            # def dummy_print():
+            #     jax.debug.print("{}", agent_params)
+
+            # dummy_print()
 
             return (rng, agent_params), compute_nash_gap(_rng, args, policy, agent_params, rollout)
         

@@ -27,7 +27,7 @@ class AdvRPS(environment.Environment):
         return EnvState(
             matrices=matrices,
             current=init_matrix,
-            done = jnp.int32(1),
+            done = jnp.int32(0),
             time = jnp.int32(1),
         )
     
@@ -36,11 +36,11 @@ class AdvRPS(environment.Environment):
         reward = jnp.full((self.num_agents, ), team_reward).at[-1].set(-team_reward.squeeze())
 
         rng, _rng = jax.random.split(rng)
-        matrix = jax.random.choice(_rng, 3)
+        matrix = jax.random.choice(_rng, self._num_states)
 
         state = state.replace(
             current = matrix,
-            done = jnp.int32(state.time + 1 == self.num_timesteps),
+            done = jnp.bitwise_or(jnp.int32(state.time + 1 == self.num_timesteps), state.done),
             time = state.time + 1
         )
         return (
