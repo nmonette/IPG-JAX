@@ -9,7 +9,7 @@ import jax.numpy as jnp
 from flax.struct import dataclass
 
 from .gridworld import AdvMultiGrid
-from .mpe import AdvMPE
+from .rps import AdvRPS
 from ..agents import DirectPolicy
 
 @dataclass
@@ -44,7 +44,7 @@ class RolloutWrapper:
         self.env_name = env_name
         self.env_kwargs = env_kwargs
         # Define the RL environment & network forward function
-        self.env = AdvMultiGrid(**env_kwargs) if env_name == "MultiGrid-TeamAdv-v0" else AdvMPE(**env_kwargs)
+        self.env = AdvMultiGrid(**env_kwargs) if env_name == "MultiGrid-TeamAdv-v0" else AdvRPS(**env_kwargs)
         self.policy = policy
         self.num_agents = num_agents
         self.gamma = gamma
@@ -185,6 +185,9 @@ class RolloutWrapper:
                 _rng, state, action
             )
             new_valid_mask = valid_mask * (1 - done)
+            # adv_obs = obs[-1]
+            # if type(adv_obs) != jnp.ndarray:
+            #     adv_obs = jnp.array(obs[-1]).reshape(1,1)
             state_action = jnp.pad(obs[-1], (0, 1)).at[-1].set(action[-1])
             lambda_ = lambda_.at[tuple(state_action)].set(lambda_[tuple(state_action)] + gamma)
             carry = [

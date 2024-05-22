@@ -14,14 +14,20 @@ class DirectPolicy:
 
     def init_params(self, rng, _=None):
         # return jnp.full(self.param_dims, 1 / self.param_dims[-1])
-        initializer = jax.nn.initializers.orthogonal()
+        if len(self.param_dims) > 1:
+            initializer = jax.nn.initializers.orthogonal()
+        else:
+            initializer = lambda rng, dims: jax.random.uniform(rng, (self.param_dims[0],))
         return proj(initializer(rng, self.param_dims), self.eps)
     
     def step(self, params, grad):
         return proj(params + self.lr * grad, self.eps)
     
     def get_actions(self, rng, state, params):
-        logits = jnp.log(params[tuple(state)])
+        if len(state.shape) > 0:
+            logits = jnp.log(params[tuple(state)])
+        else:
+            logits = jnp.log(params[state])
         action = jax.random.categorical(rng, logits)
 
         return action, logits[action]

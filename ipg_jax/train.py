@@ -11,15 +11,20 @@ import sys, os
 def make_train(args):
     def ipg_train_fn(rng):
         # --- Instantiate Policy, Parameterizations, Rollout Manager ---
-        param_dims = [args.dim, args.dim, args.dim, args.dim, 2, args.dim, args.dim, 2, 4]
-
+        # param_dims = [args.dim, args.dim, args.dim, args.dim, 2, args.dim, args.dim, 2, 4]
+        param_dims = [3, 3]
         policy = DirectPolicy(param_dims, args.lr, args.eps)
         rng, _rng = jax.random.split(rng)
         _rng = jax.random.split(_rng, 3)
         agent_params = jax.vmap(policy.init_params)(_rng)
         
-        rollout = RolloutWrapper(policy, train_rollout_len=12, 
-                                env_kwargs={"dim":args.dim, "max_time":12}
+        # rollout = RolloutWrapper(policy, train_rollout_len=12, 
+        #                         env_kwargs={"dim":args.dim, "max_time":12}
+        #                         )
+
+        rollout = RolloutWrapper(policy, train_rollout_len=5, 
+                                    env_kwargs={"num_states":3, "num_agents":3, "num_actions":3, "num_timesteps":5},
+                                    env_name="rps"
                                 )
 
         def train_loop(carry, _):
@@ -131,12 +136,12 @@ def main(args):
     experiment_num = len(list(os.walk('./output')))
     os.makedirs(f"output/experiment-{experiment_num}")
 
-    with jax.disable_jit(True):
-        states_new = []
-        for i in range(states.done.shape[0]):
-            states_new.append(jax.tree_util.tree_map(lambda v: v[i], states))
-        gv = GridVisualizer({"dim": args.dim, "max_time":12}, states_new, None)
-        gv.animate(f"output/experiment-{experiment_num}/game.gif", view=True)
+    # with jax.disable_jit(True):
+    #     states_new = []
+    #     for i in range(states.done.shape[0]):
+    #         states_new.append(jax.tree_util.tree_map(lambda v: v[i], states))
+    #     gv = GridVisualizer({"dim": args.dim, "max_time":12}, states_new, None)
+    #     gv.animate(f"output/experiment-{experiment_num}/game.gif", view=True)
 
     for agent in range(len(agent_params)):
         jnp.save(f"output/experiment-{experiment_num}/agent{agent+1}", agent_params[agent])
