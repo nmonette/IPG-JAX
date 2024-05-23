@@ -25,11 +25,11 @@ def make_train(args):
                                 env_kwargs={"dim":args.dim, "max_time":12}
                                 )
 
-        rollout = RolloutWrapper(policy, train_rollout_len=2, 
-                                    env_kwargs={"num_states":3, "num_agents":3, "num_actions":2, "num_timesteps":3},
-                                    env_name="rps",
-                                    gamma=args.gamma
-                                )
+        # rollout = RolloutWrapper(policy, train_rollout_len=2, 
+        #                             env_kwargs={"num_states":3, "num_agents":3, "num_actions":2, "num_timesteps":3},
+        #                             env_name="rps",
+        #                             gamma=args.gamma
+        #                         )
         
         # Calculate adversarial best response
         def adv_br(carry, _):
