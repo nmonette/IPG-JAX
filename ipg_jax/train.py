@@ -56,7 +56,7 @@ def make_train(args):
                     loss = jax.vmap(fn)(jnp.float32(data.reward[:, -1]), lambdas, jnp.cumsum(data.log_probs[:, -1]))
 
                     disc = jnp.cumprod(jnp.ones_like(loss) * args.gamma) / args.gamma
-                    return jnp.dot(loss, disc), jnp.dot(data.reward[:, -1], disc)
+                    return jnp.dot(loss, disc), jnp.dot(jnp.float32(data.reward[:, -1]), disc)
                 
                 grad, val =  jax.vmap(inner_loss)(data)
                 
@@ -124,18 +124,18 @@ def make_train(args):
         init_obs, init_state = rollout.env.reset(reset_rng)
         states = rollout.render_rollout(rollout_rng, agent_params, init_obs, init_state, False)
 
-        def collect_gap(rng, team_params, adv_params):
-            new_params = jnp.empty_like(agent_params)
-            new_params = new_params.at[:-1].set(team_params)
-            new_params = new_params.at[-1].set(adv_params)
-            rng, _rng = jax.random.split(rng)
-            (_, adv_params), _  = jax.lax.scan(adv_br, (_rng, new_params), None, args.br_length)
-            new_params = new_params.at[-1].set(adv_params[-1])
-            return compute_nash_gap(rng, args, policy, new_params, rollout)
+        # def collect_gap(rng, team_params, adv_params):
+        #     new_params = jnp.empty_like(agent_params)
+        #     new_params = new_params.at[:-1].set(team_params)
+        #     new_params = new_params.at[-1].set(adv_params)
+        #     rng, _rng = jax.random.split(rng)
+        #     (_, adv_params), _  = jax.lax.scan(adv_br, (_rng, new_params), None, args.br_length)
+        #     new_params = new_params.at[-1].set(adv_params[-1])
+        #     return compute_nash_gap(rng, args, policy, new_params, rollout)
         
-        nash_gap = jnp.max(jax.vmap(collect_gap)(jax.random.split(rng, len(all_params)), jnp.cumsum(all_params[:, :-1], axis=0) /  jnp.cumsum(jnp.ones_like(all_params[:, :-1]), axis=0), all_params[:, -1]), axis=1)
+        # nash_gap = jnp.max(jax.vmap(collect_gap)(jax.random.split(rng, len(all_params)), jnp.cumsum(all_params[:, :-1], axis=0) /  jnp.cumsum(jnp.ones_like(all_params[:, :-1]), axis=0), all_params[:, -1]), axis=1)
 
-        return jnp.cumsum(diff) / jnp.arange(len(diff), dtype=jnp.float32), diff, agent_params, states, nash_gap
+        return jnp.cumsum(diff) / jnp.arange(len(diff), dtype=jnp.float32), diff, agent_params, states # , nash_gap
 
     return ipg_train_fn
 
@@ -144,10 +144,10 @@ def main(args):
     train_fn = make_train(args)
     import time 
     start = time.time()
-    with jax.numpy_dtype_promotion('strict'):
-        fn = jax.jit(train_fn)
-        cum_dist, dist, agent_params, states, nash_gap = fn(rng)
-        cum_dist.block_until_ready()
+    # with jax.numpy_dtype_promotion('strict'):
+    fn = jax.jit(train_fn)
+    cum_dist, dist, agent_params, states = fn(rng) # , nash_gap
+    cum_dist.block_until_ready()
 
     print(time.time() - start)
     # print("Nash Gap: ", nash_gap)
@@ -166,10 +166,9 @@ def main(args):
     for agent in range(len(agent_params)):
         jnp.save(f"output/experiment-{experiment_num}/agent{agent+1}", agent_params[agent])
 
-    # nash_gap = jnp.max(nash_gap, 1)
-    plt.plot(nash_gap)
-    plt.xlabel("Iterations")
-    plt.title("Nash Gap")
+    # plt.plot(nash_gap)
+    # plt.xlabel("Iterations")
+    # plt.title("Nash Gap")
 
     plt.savefig(f"output/experiment-{experiment_num}/nash-gap")
     plt.close()
