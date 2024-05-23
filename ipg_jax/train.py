@@ -13,20 +13,20 @@ import sys, os
 def make_train(args):
     def ipg_train_fn(rng):
         # --- Instantiate Policy, Parameterizations, Rollout Manager ---
-        # param_dims = [args.dim, args.dim, args.dim, args.dim, 2, args.dim, args.dim, 2, 4]
+        param_dims = [args.dim, args.dim, args.dim, args.dim, 2, args.dim, args.dim, 2, 4]
         
-        param_dims = [2, 2]
+        # param_dims = [3, 2]
         policy = DirectPolicy(param_dims, args.lr, args.eps)
         rng, _rng = jax.random.split(rng)
         _rng = jax.random.split(_rng, 3)
         agent_params = jax.vmap(policy.init_params)(_rng)
         
-        # rollout = RolloutWrapper(policy, train_rollout_len=12, 
-        #                         env_kwargs={"dim":args.dim, "max_time":12}
-        #                         )
+        rollout = RolloutWrapper(policy, train_rollout_len=12, 
+                                env_kwargs={"dim":args.dim, "max_time":12}
+                                )
 
         rollout = RolloutWrapper(policy, train_rollout_len=2, 
-                                    env_kwargs={"num_states":2, "num_agents":3, "num_actions":2, "num_timesteps":2},
+                                    env_kwargs={"num_states":3, "num_agents":3, "num_actions":2, "num_timesteps":3},
                                     env_name="rps",
                                     gamma=args.gamma
                                 )
@@ -124,17 +124,16 @@ def make_train(args):
         init_obs, init_state = rollout.env.reset(reset_rng)
         states = rollout.render_rollout(rollout_rng, agent_params, init_obs, init_state, False)
 
-        def collect_gap(rng, all_params, idx):
+        def collect_gap(rng, team_params, adv_params):
             new_params = jnp.empty_like(agent_params)
-            team_params = (jnp.where(jnp.arange(len(all_params))[tuple([slice(None)] + [None for _ in range(param_dims[-1] + 1)])] < idx, all_params, jnp.zeros_like(all_params, dtype=jnp.float32)).sum(axis=0) / jnp.float32(idx))[:-1]
             new_params = new_params.at[:-1].set(team_params)
-            new_params = new_params.at[-1].set(all_params[idx, -1])
+            new_params = new_params.at[-1].set(adv_params)
             rng, _rng = jax.random.split(rng)
-            (_, adv_params), _  = jax.lax.scan(adv_br, (_rng, agent_params), None, args.br_length)
+            (_, adv_params), _  = jax.lax.scan(adv_br, (_rng, new_params), None, args.br_length)
             new_params = new_params.at[-1].set(adv_params[-1])
             return compute_nash_gap(rng, args, policy, new_params, rollout)
         
-        nash_gap = jnp.max(jax.vmap(collect_gap, in_axes=(0, None, 0))(jax.random.split(rng, len(all_params) - 1), all_params, jnp.arange(1, len(all_params))), axis=1)
+        nash_gap = jnp.max(jax.vmap(collect_gap)(jax.random.split(rng, len(all_params)), jnp.cumsum(all_params[:, :-1], axis=0) /  jnp.cumsum(jnp.ones_like(all_params[:, :-1]), axis=0), all_params[:, -1]), axis=1)
 
         return jnp.cumsum(diff) / jnp.arange(len(diff), dtype=jnp.float32), diff, agent_params, states, nash_gap
 
