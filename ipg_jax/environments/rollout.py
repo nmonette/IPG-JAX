@@ -62,13 +62,13 @@ class RolloutWrapper:
 
     # --- ENVIRONMENT ROLLOUT ---
     def batch_rollout(
-        self, rng, agent_params, init_obs, init_state, eval=False, adv=False
+        self, rng, agent_params, init_obs, init_state, eval=False, adv=False, adv_idx = -1
     ):
         """Evaluate an agent on a single environment over a batch of workers."""
         rng = jax.random.split(rng, init_obs.shape[0])
         if adv:
-            return jax.vmap(self.adv_rollout, in_axes=(0, None, 0, 0, None))(
-            rng, agent_params, init_obs, init_state, eval
+            return jax.vmap(self.adv_rollout, in_axes=(0, None, 0, 0, None, None))(
+            rng, agent_params, init_obs, init_state, adv_idx, eval
         )
         else:
             return jax.vmap(self.single_rollout, in_axes=(0, None, 0, 0, None))(
@@ -171,7 +171,7 @@ class RolloutWrapper:
         return states
 
     def adv_rollout(
-        self, rng, agent_params, init_obs, init_state, eval=False
+        self, rng, agent_params, init_obs, init_state, adv_idx, eval=False
     ):
         """Rollout an episode."""
         def policy_step(state_input, _):
@@ -188,7 +188,7 @@ class RolloutWrapper:
             # adv_obs = obs[-1]
             # if type(adv_obs) != jnp.ndarray:
             #     adv_obs = jnp.array(obs[-1]).reshape(1,1)
-            state_action = jnp.pad(obs[-1], (0, 1)).at[-1].set(action[-1])
+            state_action = jnp.pad(obs[adv_idx], (0, 1)).at[adv_idx].set(action[adv_idx])
             lambda_ = lambda_.at[tuple(state_action)].set(lambda_[tuple(state_action)] + gamma)
             carry = [
                 rng,
@@ -213,7 +213,7 @@ class RolloutWrapper:
                 init_state,
                 agent_params,
                 jnp.int32(1.0),
-                jnp.zeros_like(self.policy.get_agent_params(agent_params, -1)) if self.state_action_space is None else jnp.zeros(self.state_action_space),
+                jnp.zeros_like(self.policy.get_agent_params(agent_params, adv_idx)) if self.state_action_space is None else jnp.zeros(self.state_action_space),
                 jnp.float32(1.0),
             ],
             (),

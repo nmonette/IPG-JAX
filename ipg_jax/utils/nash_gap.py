@@ -21,98 +21,51 @@ def compute_nash_gap(rng, args, policy, agent_params, rollout):
     rng, _rng = jax.random.split(rng)
     base = avg_return(_rng, agent_params)
 
-    # Calculate adversarial best response
-    def adv_br(carry, _):
-        rng, agent_params = carry
-
-        # Calculate Gradients
-        @partial(jax.grad, has_aux=True)
-        def loss(agent_params, rng):
-            # Collect rollouts
-            rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
-            init_obs, init_state = rollout.batch_reset(reset_rng, args.rollout_length)
-            data, _, _, _, lambda_ = rollout.batch_rollout(rollout_rng, agent_params, init_obs, init_state, adv=True)
-
-            lambda_ = lambda_.mean(axis=0)
-
-            def inner_loss(data):
-
-                fn = lambda r, l, lp: (r - args.nu * l) * lp 
-
-                idx = jnp.concatenate((data.obs[:, -1], data.action[:, -1].reshape(data.action.shape[0], -1)), axis=-1)
-                idx_fn = lambda idx: lambda_[tuple(idx)]
-                lambdas = jax.vmap(idx_fn)(idx)
-
-                loss = jax.vmap(fn)(jnp.float32(data.reward[:, -1]), lambdas, jnp.cumsum(data.log_probs[:, -1]))
-
-                disc = jnp.cumprod(jnp.ones_like(loss) * args.gamma) / args.gamma
-                return jnp.dot(loss, disc), jnp.dot(data.reward[:, -1], disc)
-                    
-            grad, val =  jax.vmap(inner_loss)(data)
-            
-            return grad.mean(), val.mean()
-
-        rng, _rng = jax.random.split(rng)
-        grad, val = loss(agent_params, _rng)
-        grad = grad[-1]
-        agent_params = agent_params.at[-1].set(policy.step(agent_params[-1], grad))
-
-        return (rng, agent_params), (agent_params[-1], val)
-
-    # Run adversary's train loop 
-    rng, _rng = jax.random.split(rng)
-    _, (adv_params_new, val)  = jax.lax.scan(adv_br, (_rng, agent_params), None, args.br_length)
-
-    # Best Iterate of Adversary BR 
-    idx = jnp.argmax(val) - 1
-    adv_params = agent_params.at[-1].set(adv_params_new[jnp.where(idx > 0, idx, 0)])
-
-    rng, _rng = jax.random.split(rng)
-    adv_gap = (avg_return(_rng, adv_params)[-1] - base[-1])
-    
-    # Update team
-    def train_single(rng, agent_params, idx):
-        def train_team(carry, _):
+    def gap_fn(rng, agent_params, adv_idx):
+        # Calculate adversarial best response
+        def adv_br(carry, _):
             rng, agent_params = carry
 
-            @jax.grad
-            def outer_loss(agent_params, rng):
+            # Calculate Gradients
+            @partial(jax.grad, has_aux=True)
+            def loss(agent_params, rng):
+                # Collect rollouts
                 rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
                 init_obs, init_state = rollout.batch_reset(reset_rng, args.rollout_length)
-                data, _, _, _ = rollout.batch_rollout(rollout_rng, agent_params, init_obs, init_state, adv=False)
-                
-                def episode_loss(log_probs, rewards):
+                data, _, _, _, lambda_ = rollout.batch_rollout(rollout_rng, agent_params, init_obs, init_state, adv=True)
 
-                    def inner_returns(carry, i):
-                        returns = carry
+                lambda_ = lambda_.mean(axis=0)
 
-                        return returns.at[i].set(args.gamma * returns[i + 1] + rewards[i]), None
+                def inner_loss(data):
+
+                    fn = lambda r, l, lp: (r - args.nu * l) * lp 
+
+                    idx = jnp.concatenate((data.obs[:, adv_idx], data.action[:, adv_idx].reshape(data.action.shape[0], -1)), axis=-1)
+                    idx_fn = lambda idx: lambda_[tuple(idx)]
+                    lambdas = jax.vmap(idx_fn)(idx)
+
+                    loss = jax.vmap(fn)(jnp.float32(data.reward[:, adv_idx]), lambdas, jnp.cumsum(data.log_probs[:, adv_idx]))
+
+                    disc = jnp.cumprod(jnp.ones_like(loss) * args.gamma) / args.gamma
+                    return jnp.dot(loss, disc), jnp.dot(data.reward[:, adv_idx], disc)
                         
-                    returns, _ = jax.lax.scan(inner_returns, (jnp.zeros_like(rewards).at[-1].set(rewards[-1])), jnp.arange(rewards.shape[0]), reverse=True)
-
-                    return jnp.dot(log_probs, returns)
+                grad, val =  jax.vmap(inner_loss)(data)
                 
-                return jax.vmap(episode_loss, in_axes=(0, 0))(data.log_probs[:,:, idx], jnp.float32(data.reward[:,:, idx])).mean()
+                return grad.mean(), val.mean()
 
             rng, _rng = jax.random.split(rng)
-            grad = outer_loss(agent_params, _rng)[idx]
+            grad, val = loss(agent_params, _rng)
+            grad = grad[adv_idx]
+            agent_params = agent_params.at[adv_idx].set(policy.step(agent_params[adv_idx], grad))
 
-            # jax.lax.cond(jnp.logical_not(idx), lambda: jax.debug.print("{}", grad.sum()), lambda: None)
+            return (rng, agent_params), (agent_params[adv_idx], val)
 
-            agent_params = agent_params.at[idx].set(policy.step(agent_params[idx], grad))
-
-            return (rng, agent_params), None
-        
-        carry_out, _ = jax.lax.scan(train_team, (rng, agent_params), None, args.br_length)
-        
-        agent_params = carry_out[1]
+        # Run adversary's train loop 
         rng, _rng = jax.random.split(rng)
+        _, (adv_params_new, val)  = jax.lax.scan(adv_br, (_rng, agent_params), None, args.br_length)
 
-        # jax.lax.cond(jnp.logical_not(idx), lambda: jax.debug.print("{}", avg_return(_rng, agent_params, idx)), lambda: None)
+        # Best Iterate of Adversary BR 
+        idx = jnp.argmax(val) - 1
+        return avg_return(rng, agent_params.at[adv_idx].set(adv_params_new[jnp.where(idx > 0, idx, 0)]))[adv_idx] - base[adv_idx]
 
-        return (avg_return(_rng, agent_params)[idx] - base[idx])
-
-    rng = jax.random.split(rng)
-    team_gap = jax.vmap(train_single, in_axes=(0, None, 0))(rng, agent_params, jnp.arange(2))
-
-    return jnp.concatenate((team_gap, adv_gap.reshape(1, )))
+    return jax.vmap(gap_fn, in_axes=(0, None, 0))(jax.random.split(rng, rollout.num_agents), agent_params, jnp.arange(rollout.num_agents))

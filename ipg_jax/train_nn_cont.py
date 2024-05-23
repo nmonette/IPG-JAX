@@ -85,23 +85,19 @@ def make_train(args):
             
             # Update team
             @jax.grad
-            def outer_loss(team_params, adv_params, rng, idx):
+            def outer_loss(agent_params, rng, idx):
                 # Collect rollouts
                 rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
                 init_obs, init_state = rollout.batch_reset(reset_rng, args.tr)
-                data, _, _, _ = rollout.batch_rollout(rollout_rng, adv_params, team_params, init_obs, init_state)
+                data, _, _, _ = rollout.batch_rollout(rollout_rng, agent_params, init_obs, init_state, adv=False)
 
                 def episode_loss(log_probs, rewards):
+                    disc = jnp.cumprod(jnp.full_like(rewards, args.gamma)) / args.gamma
+                    cs = jnp.cumsum(log_probs)
 
-                    def inner_returns(carry, i):
-                        returns = carry
+                    rlp = jnp.dot(rewards, cs)
+                    return jnp.dot(rlp, disc)
 
-                        return returns.at[i].set(args.gamma * returns[i + 1] + rewards[i]), None
-                        
-                    returns, _ = jax.lax.scan(inner_returns, (jnp.zeros_like(rewards).at[-1].set(rewards[-1])), jnp.arange(rewards.shape[0]), reverse=True)
-
-                    return jnp.dot(log_probs, returns)
-                
                 return -jax.vmap(episode_loss, in_axes=(0, 0))(data.log_probs[:,:, idx], jnp.float32(data.reward[:,:, idx])).mean()
 
             rng, _rng = jax.random.split(rng)

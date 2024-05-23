@@ -14,6 +14,7 @@ def make_train(args):
     def ipg_train_fn(rng):
         # --- Instantiate Policy, Parameterizations, Rollout Manager ---
         # param_dims = [args.dim, args.dim, args.dim, args.dim, 2, args.dim, args.dim, 2, 4]
+        
         param_dims = [2, 2]
         policy = DirectPolicy(param_dims, args.lr, args.eps)
         rng, _rng = jax.random.split(rng)
@@ -24,59 +25,59 @@ def make_train(args):
         #                         env_kwargs={"dim":args.dim, "max_time":12}
         #                         )
 
-        rollout = RolloutWrapper(policy, train_rollout_len=1, 
-                                    env_kwargs={"num_states":2, "num_agents":3, "num_actions":2, "num_timesteps":5},
-                                    env_name="rps"
+        rollout = RolloutWrapper(policy, train_rollout_len=2, 
+                                    env_kwargs={"num_states":2, "num_agents":3, "num_actions":2, "num_timesteps":2},
+                                    env_name="rps",
+                                    gamma=args.gamma
                                 )
+        
+        # Calculate adversarial best response
+        def adv_br(carry, _):
+            rng, agent_params = carry
+
+            # Calculate Gradients
+            @partial(jax.grad, has_aux=True)
+            def loss(agent_params, rng):
+                # Collect rollouts
+                rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
+                init_obs, init_state = rollout.batch_reset(reset_rng, args.rollout_length)
+                data, _, _, _, lambda_ = rollout.batch_rollout(rollout_rng, agent_params, init_obs, init_state, adv=True)
+
+                lambda_ = lambda_.mean(axis=0)
+
+                def inner_loss(data):
+
+                    fn = lambda r, l, lp: (r - args.nu * l) * lp 
+
+                    idx = jnp.concatenate((data.obs[:, -1], data.action[:, -1].reshape(data.action.shape[0], -1)), axis=-1)
+                    idx_fn = lambda idx: lambda_[tuple(idx)]
+                    lambdas = jax.vmap(idx_fn)(idx)
+
+                    loss = jax.vmap(fn)(jnp.float32(data.reward[:, -1]), lambdas, jnp.cumsum(data.log_probs[:, -1]))
+
+                    disc = jnp.cumprod(jnp.ones_like(loss) * args.gamma) / args.gamma
+                    return jnp.dot(loss, disc), jnp.dot(data.reward[:, -1], disc)
+                
+                grad, val =  jax.vmap(inner_loss)(data)
+                
+                return grad.mean(), val.mean()
+
+            rng, _rng = jax.random.split(rng)
+            grad, val = loss(agent_params, _rng)
+            grad = grad[-1]
+            agent_params = agent_params.at[-1].set(policy.step(agent_params[-1], grad))
+
+            return (rng, agent_params), None
 
         def train_loop(carry, _):
             rng, agent_params = carry
-            
-            # Calculate adversarial best response
-            def adv_br(carry, _):
-                rng, agent_params = carry
-
-                # Calculate Gradients
-                @partial(jax.grad, has_aux=True)
-                def loss(agent_params, rng):
-                    # Collect rollouts
-                    rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
-                    init_obs, init_state = rollout.batch_reset(reset_rng, args.rollout_length)
-                    data, _, _, _, lambda_ = rollout.batch_rollout(rollout_rng, agent_params, init_obs, init_state, adv=True)
-
-                    lambda_ = lambda_.mean(axis=0)
-
-                    def inner_loss(data):
-    
-                        fn = lambda r, l, lp: (r - args.nu * l) * lp 
-
-                        idx = jnp.concatenate((data.obs[:, -1], data.action[:, -1].reshape(data.action.shape[0], -1)), axis=-1)
-                        idx_fn = lambda idx: lambda_[tuple(idx)]
-                        lambdas = jax.vmap(idx_fn)(idx)
-
-                        loss = jax.vmap(fn)(jnp.float32(data.reward[:, -1]), lambdas, jnp.cumsum(data.log_probs[:, -1]))
-
-                        disc = jnp.cumprod(jnp.ones_like(loss) * args.gamma) / args.gamma
-                        return jnp.dot(loss, disc), jnp.dot(data.reward[:, -1], disc)
-                    
-                    grad, val =  jax.vmap(inner_loss)(data)
-                    
-                    return grad.mean(), val.mean()
-
-                rng, _rng = jax.random.split(rng)
-                grad, val = loss(agent_params, _rng)
-                grad = grad[-1]
-                agent_params = agent_params.at[-1].set(policy.step(agent_params[-1], grad))
-
-                return (rng, agent_params), (agent_params[-1], val)
+            old = agent_params.copy()
             
             # Run adversary's train loop 
             rng, _rng = jax.random.split(rng)
-            _, (adv_params, val)  = jax.lax.scan(adv_br, (_rng, agent_params), None, args.br_length)
+            (_, adv_params), _  = jax.lax.scan(adv_br, (_rng, agent_params), None, args.br_length)
 
-            # Best Iterate of Adversary BR 
-            idx = jnp.argmax(val) - 1
-            agent_params = agent_params.at[-1].set(adv_params[jnp.where(idx > 0, idx, 0)])
+            agent_params = agent_params.at[-1].set(adv_params[-1])
 
             # Update team
             @jax.grad
@@ -87,16 +88,12 @@ def make_train(args):
                 data, _, _, _ = rollout.batch_rollout(rollout_rng, agent_params, init_obs, init_state, adv=False)
 
                 def episode_loss(log_probs, rewards):
+                    disc = jnp.cumprod(jnp.full_like(rewards, args.gamma)) / args.gamma
+                    cs = jnp.cumsum(log_probs)
 
-                    def inner_returns(carry, i):
-                        returns = carry
+                    rlp = jnp.dot(rewards, cs)
+                    return jnp.dot(rlp, disc)
 
-                        return returns.at[i].set(args.gamma * returns[i + 1] + rewards[i]), None
-                        
-                    returns, _ = jax.lax.scan(inner_returns, (jnp.zeros_like(rewards).at[-1].set(rewards[-1])), jnp.arange(rewards.shape[0]), reverse=True)
-
-                    return jnp.dot(log_probs, returns)
-                
                 return jax.vmap(episode_loss, in_axes=(0, 0))(data.log_probs[:,:, idx], jnp.float32(data.reward[:,:, idx])).mean()
 
             rng, _rng = jax.random.split(rng)
@@ -113,22 +110,33 @@ def make_train(args):
             
             rng, _rng = jax.random.split(rng)
 
-            # def dummy_print():
-            #     jax.debug.print("{}", agent_params)
-
-            # dummy_print()
-
-            return (rng, agent_params), compute_nash_gap(_rng, args, policy, agent_params, rollout)
+            return (rng, agent_params), (agent_params, jnp.linalg.norm(agent_params[:-1] - old[:-1])) # compute_nash_gap(_rng, args, policy, agent_params, rollout)
         
-        carry_out, nash_gap = jax.lax.scan(train_loop, (rng, agent_params), jnp.arange(args.iters), args.iters)
+        carry_out, (all_params, diff) = jax.lax.scan(train_loop, (rng, agent_params), jnp.arange(args.iters), args.iters)
 
         rng, agent_params = carry_out
+
+        # Best Iterate of Team 
+        idx = jnp.argmin(diff) - 1
+        agent_params = agent_params.at[:-1].set(all_params[jnp.where(idx > 0, idx, 0)][:-1])
 
         rng, reset_rng, rollout_rng = jax.random.split(rng, 3)
         init_obs, init_state = rollout.env.reset(reset_rng)
         states = rollout.render_rollout(rollout_rng, agent_params, init_obs, init_state, False)
 
-        return nash_gap, agent_params, states
+        def collect_gap(rng, all_params, idx):
+            new_params = jnp.empty_like(agent_params)
+            team_params = (jnp.where(jnp.arange(len(all_params))[tuple([slice(None)] + [None for _ in range(param_dims[-1] + 1)])] < idx, all_params, jnp.zeros_like(all_params, dtype=jnp.float32)).sum(axis=0) / jnp.float32(idx))[:-1]
+            new_params = new_params.at[:-1].set(team_params)
+            new_params = new_params.at[-1].set(all_params[idx, -1])
+            rng, _rng = jax.random.split(rng)
+            (_, adv_params), _  = jax.lax.scan(adv_br, (_rng, agent_params), None, args.br_length)
+            new_params = new_params.at[-1].set(adv_params[-1])
+            return compute_nash_gap(rng, args, policy, new_params, rollout)
+        
+        nash_gap = jnp.max(jax.vmap(collect_gap, in_axes=(0, None, 0))(jax.random.split(rng, len(all_params) - 1), all_params, jnp.arange(1, len(all_params))), axis=1)
+
+        return jnp.cumsum(diff) / jnp.arange(len(diff), dtype=jnp.float32), diff, agent_params, states, nash_gap
 
     return ipg_train_fn
 
@@ -139,10 +147,11 @@ def main(args):
     start = time.time()
     with jax.numpy_dtype_promotion('strict'):
         fn = jax.jit(train_fn)
-        nash_gap, agent_params, states = fn(rng)
-        nash_gap.block_until_ready()
+        cum_dist, dist, agent_params, states, nash_gap = fn(rng)
+        cum_dist.block_until_ready()
 
     print(time.time() - start)
+    # print("Nash Gap: ", nash_gap)
 
     os.makedirs("output", exist_ok=True)
     experiment_num = len(list(os.walk('./output')))
@@ -158,14 +167,27 @@ def main(args):
     for agent in range(len(agent_params)):
         jnp.save(f"output/experiment-{experiment_num}/agent{agent+1}", agent_params[agent])
 
-    nash_gap = jnp.max(nash_gap, 1)
+    # nash_gap = jnp.max(nash_gap, 1)
     plt.plot(nash_gap)
     plt.xlabel("Iterations")
-    plt.ylabel("Nash Gap")
+    plt.title("Nash Gap")
 
     plt.savefig(f"output/experiment-{experiment_num}/nash-gap")
+    plt.close()
+
+    plt.plot(cum_dist)
+    plt.xlabel("Iterations")
+    plt.title("Cumulative Avg Euclidean Distance Between Policies")
+
+    plt.savefig(f"output/experiment-{experiment_num}/cumulative-distance")
+    plt.close()
     
-    
+    plt.plot(dist)
+    plt.xlabel("Iterations")
+    plt.title("Euclidean Distance Between Policies")
+
+    plt.savefig(f"output/experiment-{experiment_num}/distance")
+    plt.close()
 
 if __name__ == "__main__":
     main()
