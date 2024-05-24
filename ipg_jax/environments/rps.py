@@ -32,6 +32,7 @@ class AdvRPS(environment.Environment):
         )
     
     def step_env(self, rng, state, action, *args, **kwargs):
+        action = jnp.int32(action)
         team_reward = state.matrices[state.current][tuple(action)]
         reward = jnp.full((self.num_agents, ), team_reward).at[-1].set(-team_reward.squeeze())
 
