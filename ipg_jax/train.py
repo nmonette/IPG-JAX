@@ -120,7 +120,7 @@ def make_train(args):
             team_params = jax.tree_map(lambda x: x /  jnp.cumsum(jnp.ones_like(x), axis=0), all_train_states.team_params)
         )   
         nash_gap = jnp.max(jax.vmap(collect_gap)(jax.random.split(rng, args.iters), avg_params), axis=1)
-        cum_diff = jax.vmap(team_policy.team_diff(avg_params.team_params[1:], avg_params.team_params[:-1])) # jnp.cumsum(diff) / jnp.arange(len(diff), dtype=jnp.float32)
+        cum_diff = jax.vmap(team_policy.team_diff)(jax.tree_map(lambda x: x[1:], avg_params.team_params), jax.tree_map(lambda x: x[:-1], avg_params.team_params)) # jnp.cumsum(diff) / jnp.arange(len(diff), dtype=jnp.float32)
         return cum_diff, diff, adv_params, team_params, nash_gap
 
     return ipg_train_fn
@@ -140,7 +140,7 @@ def main(args):
 
     os.makedirs("output", exist_ok=True)
     experiment_num = len(list(os.walk('./output')))
-    os.makedirs(f"output/experiment-{experiment_num}")
+    os.makedirs(f"output/experiment-{experiment_num}", exist_ok=True)
 
     # with jax.disable_jit(True):
     #     states_new = []
@@ -157,26 +157,7 @@ def main(args):
     with open(f"output/experiment-{experiment_num}/agent3.pickle", 'wb') as file:
             pickle.dump(adv_params, file)
 
-    plt.plot(nash_gap)
-    plt.xlabel("Iterations")
-    plt.title("Nash Gap")
-
-    plt.savefig(f"output/experiment-{experiment_num}/nash-gap")
-    plt.close()
-
-    plt.plot(cum_dist)
-    plt.xlabel("Iterations")
-    plt.title("Cumulative Avg Euclidean Distance Between Policies")
-
-    plt.savefig(f"output/experiment-{experiment_num}/cumulative-distance")
-    plt.close()
-    
-    plt.plot(dist)
-    plt.xlabel("Iterations")
-    plt.title("Euclidean Distance Between Policies")
-
-    plt.savefig(f"output/experiment-{experiment_num}/distance")
-    plt.close()
+    return nash_gap, cum_dist, dist
 
 if __name__ == "__main__":
     main()
