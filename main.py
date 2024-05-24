@@ -1,7 +1,6 @@
 import sys
 
 from ipg_jax.train import main as main_direct
-from ipg_jax.train_nn import main as main_nn
 from ipg_jax.train_nn_cont import main as main_cont
 from ipg_jax.utils import parse_args
 

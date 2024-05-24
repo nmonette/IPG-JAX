@@ -11,7 +11,7 @@ from .reinforce import make_reinforce
 
 from functools import partial
 
-import sys, os
+import os, pickle
 
 def make_train(args):
 
@@ -109,7 +109,7 @@ def make_train(args):
         # Best Iterate of Team 
         idx = jnp.argmin(diff) - 1
         idx = jnp.where(idx > 0, idx, 0)
-        train_state = train_state.copy_team(train_state, jax.tree_map(lambda x: x[idx], all_train_states))
+        train_state = jax.tree_map(lambda x: x[idx], all_train_states)
 
         def collect_gap(rng, train_state):
             rng, _rng = jax.random.split(rng)
@@ -118,10 +118,10 @@ def make_train(args):
         
         avg_params = all_train_states.replace(
             team_params = jax.tree_map(lambda x: x /  jnp.cumsum(jnp.ones_like(x), axis=0), all_train_states.team_params)
-        )
+        )   
         nash_gap = jnp.max(jax.vmap(collect_gap)(jax.random.split(rng, args.iters), avg_params), axis=1)
-
-        return jnp.cumsum(diff) / jnp.arange(len(diff), dtype=jnp.float32), diff, adv_params, team_params, nash_gap
+        cum_diff = jax.vmap(team_policy.team_diff(avg_params.team_params[1:], avg_params.team_params[:-1])) # jnp.cumsum(diff) / jnp.arange(len(diff), dtype=jnp.float32)
+        return cum_diff, diff, adv_params, team_params, nash_gap
 
     return ipg_train_fn
 
@@ -132,7 +132,7 @@ def main(args):
     start = time.time()
     # with jax.numpy_dtype_promotion('strict'):
     fn = jax.jit(train_fn)
-    cum_dist, dist, agent_params, states = fn(rng) # , nash_gap
+    cum_dist, dist, adv_params, team_params, nash_gap = fn(rng) 
     cum_dist.block_until_ready()
 
     print(time.time() - start)
@@ -149,15 +149,20 @@ def main(args):
     #     gv = GridVisualizer({"dim": args.dim, "max_time":12}, states_new, None)
     #     gv.animate(f"output/experiment-{experiment_num}/game.gif", view=True)
 
-    for agent in range(len(agent_params)):
-        jnp.save(f"output/experiment-{experiment_num}/agent{agent+1}", agent_params[agent])
+    for agent in range(2):
+        params = jax.tree_map(lambda x: x[agent], team_params)
+        with open(f"output/experiment-{experiment_num}/agent{agent+1}.pickle", 'wb') as file:
+            pickle.dump(params, file)
 
-    # plt.plot(nash_gap)
-    # plt.xlabel("Iterations")
-    # plt.title("Nash Gap")
+    with open(f"output/experiment-{experiment_num}/agent3.pickle", 'wb') as file:
+            pickle.dump(adv_params, file)
 
-    # plt.savefig(f"output/experiment-{experiment_num}/nash-gap")
-    # plt.close()
+    plt.plot(nash_gap)
+    plt.xlabel("Iterations")
+    plt.title("Nash Gap")
+
+    plt.savefig(f"output/experiment-{experiment_num}/nash-gap")
+    plt.close()
 
     plt.plot(cum_dist)
     plt.xlabel("Iterations")
