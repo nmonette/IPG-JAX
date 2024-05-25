@@ -13,6 +13,10 @@ from functools import partial
 
 import os, pickle
 
+TIME_HORIZON = 1
+NUM_STATES = 1
+NUM_AGENTS = 3
+
 def make_train(args):
 
     # Selecting which TrainState we want to use
@@ -24,8 +28,8 @@ def make_train(args):
     def ipg_train_fn(rng):
         # --- Instantiate Policy, Parameterizations, Rollout Manager ---
         # state_action_space = [args.dim, args.dim, args.dim, args.dim, 2, args.dim, args.dim, 2, 4]
-        num_agents = 3
-        team_state_action_space = adv_state_action_space = [3, 2]
+        num_agents = NUM_AGENTS
+        team_state_action_space = adv_state_action_space = [1, 2]
 
         if args.param == "direct":
             team_policy = DirectPolicy(team_state_action_space, args.lr, args.eps)
@@ -69,8 +73,8 @@ def make_train(args):
         else:
             raise NotImplementedError("Parameterization not implemented")
         
-        rollout = RolloutWrapper(adv_policy, team_policy, train_rollout_len=3, 
-                                    env_kwargs={"num_states":3, "num_agents":num_agents, "num_actions":team_state_action_space[-1], "num_timesteps":3},
+        rollout = RolloutWrapper(adv_policy, team_policy, train_rollout_len=TIME_HORIZON, 
+                                    env_kwargs={"num_states":NUM_STATES, "num_agents":NUM_AGENTS, "num_actions":team_state_action_space[-1], "num_timesteps":TIME_HORIZON},
                                     env_name="rps",
                                     gamma=args.gamma,
                                     state_action_space=adv_state_action_space
@@ -117,7 +121,7 @@ def make_train(args):
             return compute_nash_gap(rng, args, adv_policy, team_policy, rollout, train_state, adv_state_action_space[:-1])
         
         avg_params = all_train_states.replace(
-            team_params = jax.tree_map(lambda x: x /  jnp.cumsum(jnp.ones_like(x), axis=0), all_train_states.team_params)
+            team_params = jax.tree_map(lambda x: jnp.cumsum(x, axis=0) /  jnp.cumsum(jnp.ones_like(x), axis=0), all_train_states.team_params)
         )   
         nash_gap = jnp.max(jax.vmap(collect_gap)(jax.random.split(rng, args.iters), avg_params), axis=1)
         cum_diff = jax.vmap(team_policy.team_diff)(jax.tree_map(lambda x: x[1:], avg_params.team_params), jax.tree_map(lambda x: x[:-1], avg_params.team_params)) # jnp.cumsum(diff) / jnp.arange(len(diff), dtype=jnp.float32)

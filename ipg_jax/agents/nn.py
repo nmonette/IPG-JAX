@@ -23,8 +23,16 @@ class TrainState:
     adv_opt_state: float
 
     @staticmethod
-    def update_team(policy, train_state, grad, idx):
+    def update_team(policy, train_state, grad, _):
         new_params, new_opt_state = jax.vmap(policy.step2, in_axes=(0, 0, None, 0))(train_state.team_params, grad, train_state.team_optimizer, train_state.team_opt_states)
+        return train_state.replace(
+            team_params=new_params,
+            team_opt_states=new_opt_state
+        )
+    
+    @staticmethod
+    def update_team_agent(policy, train_state, grad, idx):
+        new_params, new_opt_state = policy.step(train_state.team_params, grad, train_state.team_optimizer, train_state.team_opt_states, idx)
         return train_state.replace(
             team_params=new_params,
             team_opt_states=new_opt_state

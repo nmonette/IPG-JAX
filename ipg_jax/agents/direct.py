@@ -11,8 +11,16 @@ class TrainState:
 
     @staticmethod
     def update_team(policy, train_state, grad, idx):
+        val = policy.step(train_state.team_params[idx], grad)
         return train_state.replace(
-            team_params = train_state.team_params.at[idx].set(policy.step(train_state.team_params[idx], grad))
+            team_params = train_state.team_params.at[idx].set(val)
+        )
+    
+    @staticmethod
+    def update_team_agent(policy, train_state, grad, idx):
+        val = policy.step(train_state.team_params[idx], grad)
+        return train_state.replace(
+            team_params = train_state.team_params.at[idx].set(val)
         )
     
     @staticmethod
@@ -64,10 +72,6 @@ class DirectPolicy:
     @staticmethod
     def tree_change_at_idx(params, new_params, idx):
         return params.at[idx].set(new_params)
-        
-    def save_model(self, path):
-        # use orbax for this
-        pass
 
     def get_agent_params(self, params, idx):
         return params[idx]
