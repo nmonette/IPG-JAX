@@ -64,7 +64,7 @@ def parse_args(cmd_args=sys.argv[1:]):
         "-ds", "--disable-save", help="Disable checkpoint and eval video saving", action="store_true", dest="disable_save"
     )
     parser.add_argument(
-        "-br", "--br-length", help="Number of updates to find best respond", type=int, default=int(adv_T), dest="br_length"
+        "-br", "--br-length", help="Number of updates to find best response", type=int, default=int(adv_T), dest="br_length"
     )
     parser.add_argument(
         "-mi", "--metric-interval", help="Number of iterations between metric collection", type=int, default=50, dest="metric_interval"

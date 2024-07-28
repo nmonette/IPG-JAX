@@ -4,8 +4,6 @@ import jax.numpy as jnp
 from ..br import make_adv_br
 from ..reinforce import make_reinforce
 
-from functools import partial
-
 def compute_nash_gap(rng, args, adv_policy, team_policy, rollout, train_state, adv_state_space):
 
     def avg_return(rng, train_state):
@@ -34,15 +32,16 @@ def compute_nash_gap(rng, args, adv_policy, team_policy, rollout, train_state, a
     gap = gap.at[-1].set(avg_return(rng, adv_train_state)[-1] - base[-1])
 
     def gap_fn(rng, train_state, agent_idx):
-    
-        # Run agent's train loop 
-        rng, _rng = jax.random.split(rng)
-        train_state = adv_br(_rng, train_state, agent_idx)
 
         def update_fn(carry, _):
             rng, train_state = carry
 
-            train_state = train_state.update_team_agent(team_policy, train_state, team_policy.get_agent_params(reinforce(train_state.team_params, train_state.adv_params, rng, agent_idx), agent_idx), agent_idx)
+            # Update Adversary
+            rng, _rng = jax.random.split(rng)
+            train_state = adv_br(_rng, train_state, agent_idx)
+            train_state = train_state.update_team_agent(team_policy, train_state, team_policy.get_agent_params(
+                reinforce(train_state.team_params, train_state.adv_params, rng, agent_idx), 
+                agent_idx), agent_idx)
 
             return (rng, train_state), train_state
 
