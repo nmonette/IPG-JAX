@@ -38,4 +38,4 @@ RUN python3.11 -m pip install --upgrade pip
 RUN python3.11 -m pip install tensorrt
 RUN python3.11 -m pip install jax[cuda12] gymnax flax matplotlib seaborn
 
-WORKDIR /home/duser/IPG_JAX
+WORKDIR /home/duser/IPG-JAX
