@@ -5,6 +5,5 @@
 jax
 gymnax
 flax
-orbax
 matplotlib
 seaborn
