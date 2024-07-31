@@ -54,7 +54,7 @@ class DirectPolicy:
         return proj(initializer(rng, self.param_dims), self.eps)
     
     def step(self, params, grad):
-        return proj(params + self.lr * grad, self.eps)
+        return proj(params - self.lr * grad, self.eps)
     
     def get_actions(self, rng, state, params):
         if len(state.shape) > 0:

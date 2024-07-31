@@ -37,7 +37,7 @@ def make_adv_br(args, rollout, adv_state_space, policy):
                     disc = jnp.cumprod(jnp.ones_like(loss) * args.gamma) / args.gamma
                     return jnp.dot(loss, disc)
                                 
-                return jax.vmap(inner_loss)(data).mean()
+                return -jax.vmap(inner_loss)(data).mean()
             
             rng, _rng = jax.random.split(rng)
             grad = loss(train_state.adv_params, train_state.team_params, _rng)

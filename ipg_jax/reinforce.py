@@ -17,6 +17,6 @@ def make_reinforce(args, rollout):
             rlp = jnp.dot(rewards, cs)
             return jnp.dot(rlp, disc)
 
-        return jax.vmap(episode_loss, in_axes=(0, 0))(data.log_probs[:,:, idx], jnp.float32(data.reward[:,:, idx])).mean()
+        return -jax.vmap(episode_loss, in_axes=(0, 0))(data.log_probs[:,:, idx], jnp.float32(data.reward[:,:, idx])).mean()
     
     return outer_loss

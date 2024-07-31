@@ -38,7 +38,7 @@ def compute_nash_gap(rng, args, adv_policy, team_policy, rollout, train_state, a
 
             # Update Adversary
             rng, _rng = jax.random.split(rng)
-            train_state = adv_br(_rng, train_state, agent_idx)
+            train_state = adv_br(_rng, train_state, -1)
             train_state = train_state.update_team_agent(team_policy, train_state, team_policy.get_agent_params(
                 reinforce(train_state.team_params, train_state.adv_params, rng, agent_idx), 
                 agent_idx), agent_idx)
@@ -46,12 +46,16 @@ def compute_nash_gap(rng, args, adv_policy, team_policy, rollout, train_state, a
             return (rng, train_state), train_state
 
         rng, _rng = jax.random.split(rng)
-        _, all_states = jax.lax.scan(update_fn, (_rng, train_state), None, args.br_length)
+        _, all_states = jax.lax.scan(update_fn, (_rng, train_state), None, args.iters)
         # TODO: try avg-iterate for the team
         ## DOING it::
         avg_params = train_state.replace(
             team_params = jax.tree_map(lambda x, y:  x.at[agent_idx].set(y[:, agent_idx].mean(axis=0)), train_state.team_params, all_states.team_params)
         )
+
         return avg_return(rng, avg_params)[agent_idx] - base[agent_idx]
 
-    return jax.vmap(gap_fn, in_axes=(0, None, 0))(jax.random.split(rng, rollout.num_agents), train_state, jnp.arange(rollout.num_agents))
+    team_gaps = jax.vmap(gap_fn, in_axes=(0, None, 0))(jax.random.split(rng, rollout.num_agents - 1), train_state, jnp.arange(rollout.num_agents - 1))
+    gap = gap.at[:-1].set(team_gaps)
+
+    return gap

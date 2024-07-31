@@ -10,7 +10,6 @@ from flax.struct import dataclass
 
 from .gridworld import AdvMultiGrid
 from .rps import AdvRPS
-from .mpe import AdvMPE
 from ..agents import DirectPolicy, SELUPolicy
 
 @dataclass
@@ -48,8 +47,6 @@ class RolloutWrapper:
         # Define the RL environment & network forward function
         if env_name == "MultiGrid-TeamAdv-v0":
             self.env = AdvMultiGrid(**env_kwargs) 
-        elif env_name == "MPE_simple_adversary_v3":
-            self.env = AdvMPE(**env_kwargs)
         else:
             self.env = AdvRPS(**env_kwargs)
             

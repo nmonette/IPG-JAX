@@ -13,8 +13,8 @@ from functools import partial
 
 import os, pickle
 
-TIME_HORIZON = 1
-NUM_STATES = 1
+TIME_HORIZON = 2
+NUM_STATES = 2
 NUM_AGENTS = 3
 
 def make_train(args):
@@ -29,10 +29,10 @@ def make_train(args):
         # --- Instantiate Policy, Parameterizations, Rollout Manager ---
         # state_action_space = [args.dim, args.dim, args.dim, args.dim, 2, args.dim, args.dim, 2, 4]
         num_agents = NUM_AGENTS
-        team_state_action_space = adv_state_action_space = [1, 2]
+        team_state_action_space = adv_state_action_space = [NUM_STATES, 2]
 
         if args.param == "direct":
-            team_policy = DirectPolicy(team_state_action_space, args.lr, args.eps)
+            team_policy = DirectPolicy(team_state_action_space, args.tlr, args.eps)
             adv_policy = DirectPolicy(adv_state_action_space, args.lr, args.eps)
 
             rng, team_rng, adv_rng = jax.random.split(rng, 3)
@@ -116,8 +116,6 @@ def make_train(args):
         train_state = jax.tree_map(lambda x: x[idx], all_train_states)
 
         def collect_gap(rng, train_state):
-            rng, _rng = jax.random.split(rng)
-            train_state = adv_br(_rng, train_state)
             return compute_nash_gap(rng, args, adv_policy, team_policy, rollout, train_state, adv_state_action_space[:-1])
         
         avg_params = all_train_states.replace(
@@ -125,6 +123,10 @@ def make_train(args):
         )   
         nash_gap = jnp.max(jax.vmap(collect_gap)(jax.random.split(rng, args.iters), avg_params), axis=1)
         cum_diff = jax.vmap(team_policy.team_diff)(jax.tree_map(lambda x: x[1:], avg_params.team_params), jax.tree_map(lambda x: x[:-1], avg_params.team_params)) # jnp.cumsum(diff) / jnp.arange(len(diff), dtype=jnp.float32)
+        
+        jax.debug.print("Best gap: {}", compute_nash_gap(rng, args, adv_policy, team_policy, rollout, train_state, adv_state_action_space[:-1]))
+        jax.debug.print("Best idx: {}\nChosen idx: {}", jnp.argmin(nash_gap), idx)
+
         return cum_diff, diff, adv_params, team_params, nash_gap
 
     return ipg_train_fn

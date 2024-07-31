@@ -9,7 +9,7 @@ S = dim * dim * dim * dim * 2 * dim * dim * 2
 H = 12
 K = 100
 gamma = 0.99
-eps = nu = 0.1
+eps = nu = 0.00001
 p = 1/2
 lp = ((320 * gamma)*(16)**(5/2) * S**2) / (nu * (1 / S) * (1 - gamma)**(11 / 2))
 delta = ((eps/8)**((1 + p) / p)) / lp**(1/p)
@@ -34,7 +34,10 @@ def parse_args(cmd_args=sys.argv[1:]):
         "-l", "--rollout-length", help="Number of rollout episodes", default=K, type=int, dest="rollout_length"
     )
     parser.add_argument(
-        "-lr", help="Learning rate", default = eta, type=float
+        "-lr", help="Adversary learning rate", default = 0.0001, type=float
+    )
+    parser.add_argument(
+        "-tlr", help="Team learning rate", default = 0.01, type=float
     )
     parser.add_argument(
         "-g", "--gamma", help="Discount Factor", default = gamma, type=float
